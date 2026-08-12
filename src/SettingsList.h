@@ -319,7 +319,28 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
         SettingInfo::Toggle(StrId::STR_MOVE_FINISHED_TO_READ, &CrossPointSettings::moveFinishedToReadFolder,
                             "moveFinishedToReadFolder", StrId::STR_CAT_SYSTEM),
 
-        // OPDS download folder: persisted + web-exposed, but category-less so it
+// --- X3 dashboard mode ---
+        // Categorised under System so the whole feature is reachable on-device;
+        // the URL is category-less because a 128-char string is miserable to
+        // enter on a four-button e-reader and the web settings UI handles it.
+        SettingInfo::Toggle(StrId::STR_DASHBOARD_ENABLED, &CrossPointSettings::dashboardEnabled,
+                            "dashboardEnabled", StrId::STR_CAT_SYSTEM),
+        SettingInfo::Enum(StrId::STR_DASHBOARD_REFRESH, &CrossPointSettings::dashboardRefreshMinutes,
+                          {StrId::STR_DASHBOARD_5_MIN, StrId::STR_DASHBOARD_10_MIN, StrId::STR_DASHBOARD_15_MIN,
+                           StrId::STR_DASHBOARD_30_MIN, StrId::STR_DASHBOARD_60_MIN},
+                          "dashboardRefreshMinutes", StrId::STR_CAT_SYSTEM),
+        SettingInfo::Toggle(StrId::STR_DASHBOARD_DEEP_SLEEP, &CrossPointSettings::dashboardDeepSleep,
+                            "dashboardDeepSleep", StrId::STR_CAT_SYSTEM),
+        // Timeouts and URL: persisted + web-exposed, hidden from the on-device
+        // list. Nobody is dialling a timeout in on the device.
+        SettingInfo::String(StrId::STR_DASHBOARD_URL, &SETTINGS.dashboardUrl[0], sizeof(SETTINGS.dashboardUrl),
+                            "dashboardUrl"),
+        SettingInfo::Value(StrId::STR_DASHBOARD_WIFI_TIMEOUT, &CrossPointSettings::dashboardWifiTimeoutSeconds,
+                           {5, 120, 5}, "dashboardWifiTimeoutSeconds"),
+        SettingInfo::Value(StrId::STR_DASHBOARD_HTTP_TIMEOUT, &CrossPointSettings::dashboardHttpTimeoutSeconds,
+                           {5, 120, 5}, "dashboardHttpTimeoutSeconds"),
+
+                // OPDS download folder: persisted + web-exposed, but category-less so it
         // is hidden from the on-device Settings screen (edited via OPDS UI).
         SettingInfo::String(StrId::STR_OPDS_DOWNLOAD_FOLDER, &SETTINGS.opdsDownloadFolder[0],
                             sizeof(SETTINGS.opdsDownloadFolder), "opdsDownloadFolder"),

@@ -257,6 +257,11 @@ HalGPIO::WakeupReason HalGPIO::getWakeupReason() const {
 
   const bool usbConnected = isUsbConnected();
 
+  // Checked before the GPIO cases: dashboard mode arms the timer and the power
+  // button together, and the cause reported is whichever actually fired.
+  if (resetReason == ESP_RST_DEEPSLEEP && wakeupCause == ESP_SLEEP_WAKEUP_TIMER) {
+    return WakeupReason::Timer;
+  }
   if (resetReason == ESP_RST_DEEPSLEEP &&
       (wakeupCause == ESP_SLEEP_WAKEUP_GPIO || wakeupCause == ESP_SLEEP_WAKEUP_EXT1)) {
     return WakeupReason::PowerButton;

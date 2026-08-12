@@ -42,6 +42,18 @@ class HalPowerManager {
   // Should be called inside main loop() to handle the currentLockMode
   void startDeepSleep(HalGPIO& gpio) const;
 
+  // As startDeepSleep(), but also arms the RTC timer so the device wakes on its
+  // own after `seconds`. Wake sources are additive on ESP32-C3, so the power
+  // button stays armed and the user can always wake the device early.
+  //
+  // seconds == 0 behaves exactly like startDeepSleep(). Values are clamped to
+  // MAX_TIMER_WAKE_SECONDS; the RTC timer counts microseconds in a uint64, so
+  // the real ceiling is far higher, but a runaway setting that parks the device
+  // for a month is a bug, not a feature.
+  void startDeepSleepWithTimer(HalGPIO& gpio, uint32_t seconds) const;
+
+  static constexpr uint32_t MAX_TIMER_WAKE_SECONDS = 24 * 60 * 60;
+
   // Get battery percentage (range 0-100)
   uint16_t getBatteryPercentage() const;
 

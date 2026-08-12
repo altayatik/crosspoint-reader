@@ -310,6 +310,22 @@ unsigned long CrossPointSettings::getSleepTimeoutMs() const {
   return static_cast<unsigned long>(minutes) * 60UL * 1000UL;
 }
 
+uint16_t CrossPointSettings::getDashboardRefreshMinutes() const {
+  switch (dashboardRefreshMinutes) {
+    case DASHBOARD_REFRESH_5:
+      return 5;
+    case DASHBOARD_REFRESH_10:
+      return 10;
+    case DASHBOARD_REFRESH_30:
+      return 30;
+    case DASHBOARD_REFRESH_60:
+      return 60;
+    case DASHBOARD_REFRESH_15:
+    default:
+      return 15;
+  }
+}
+
 int CrossPointSettings::getRefreshFrequency() const {
   switch (refreshFrequency) {
     case REFRESH_1:

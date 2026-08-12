@@ -7,6 +7,7 @@
 #include <esp_sleep.h>
 #include <soc/soc_caps.h>
 
+#include <algorithm>
 #include <cassert>
 
 #include "HalGPIO.h"
@@ -89,6 +90,35 @@ void HalPowerManager::startDeepSleep(HalGPIO& gpio) const {
   // Waits for the power button to be physically released (so holding it doesn't
   // immediately wake the device again), then arms the wake source and sleeps.
   freeink::PowerManager::deepSleepUntilPowerButton();
+}
+
+void HalPowerManager::startDeepSleepWithTimer(HalGPIO& gpio, const uint32_t seconds) const {
+  if (seconds == 0) {
+    startDeepSleep(gpio);
+    return;  // does not return in practice; keeps the contract obvious
+  }
+
+  const uint32_t clamped = std::min(seconds, MAX_TIMER_WAKE_SECONDS);
+  if (clamped != seconds) {
+    LOG_ERR("PWR", "Timer wake %lu s clamped to %lu s", static_cast<unsigned long>(seconds),
+            static_cast<unsigned long>(clamped));
+  }
+
+  // Arm the RTC timer BEFORE startDeepSleep(): that call ends in
+  // deepSleepUntilPowerButton(), which arms the GPIO source and never returns.
+  // esp_sleep_enable_*_wakeup() calls accumulate rather than replace, so both
+  // sources are live and either one wakes the device.
+  const esp_err_t err = esp_sleep_enable_timer_wakeup(static_cast<uint64_t>(clamped) * 1000000ULL);
+  if (err != ESP_OK) {
+    // Losing the timer means the dashboard stops refreshing until the user
+    // presses power. Log it and sleep anyway -- the alternative is staying awake
+    // and flattening the battery, which is strictly worse.
+    LOG_ERR("PWR", "esp_sleep_enable_timer_wakeup failed: %d", static_cast<int>(err));
+  } else {
+    LOG_DBG("PWR", "Timer wake armed for %lu s", static_cast<unsigned long>(clamped));
+  }
+
+  startDeepSleep(gpio);
 }
 
 uint16_t HalPowerManager::getBatteryPercentage() const {

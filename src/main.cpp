@@ -28,6 +28,7 @@
 #include "SdCardFontSystem.h"
 #include "activities/Activity.h"
 #include "activities/ActivityManager.h"
+#include "activities/dashboard/DashboardActivity.h"
 #include "activities/settings/SdFirmwareUpdateActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
@@ -368,9 +369,19 @@ void setup() {
   // skips the panel-clearing pass and the X3 initial-full-sync arming (see
   // HalDisplay::begin), so the first paint is FAST_REFRESH (~500ms) over the
   // retained frame and input dispatches against a visible UI.
-  const BootResume resume = isSilentReboot              ? BootResume::Silent
+  // A timer wake in dashboard mode is unattended: nobody is watching, and the
+  // splash would cost a full extra e-ink refresh on every cycle before the
+  // dashboard frame lands.
+  const bool dashboardTimerWake = SETTINGS.dashboardEnabled && wakeupReason == HalGPIO::WakeupReason::Timer;
+
+  const BootResume resumeBase = isSilentReboot              ? BootResume::Silent
                             : !APP_STATE.showBootScreen ? BootResume::SplashlessWake
                                                         : BootResume::Splash;
+  // Fold an unattended dashboard wake into the silent path: seamless display
+  // init, no splash, and the routing block below paints the dashboard as the
+  // first and only frame.
+  const BootResume resume = dashboardTimerWake ? BootResume::Silent : resumeBase;
+
   bool allowFastInitialReaderRefresh = false;
 
   setupDisplayAndFonts(resume != BootResume::Splash);
@@ -418,6 +429,25 @@ void setup() {
     // Skip normal home/reader routing: jump straight into the SD firmware picker.
     activityManager.replaceActivity(
         std::make_unique<SdFirmwareUpdateActivity>(renderer, mappedInputManager, /*recoveryMode=*/true));
+  } else if (SETTINGS.dashboardEnabled && !isSilentReboot) {
+    // Dashboard mode owns the boot when it is enabled: the device is a wall
+    // display, not a reader, and every wake should end up showing the panel.
+    //
+    // Silent reboots are excluded. They are an internal mechanism for returning
+    // to a specific screen (a WiFi activity restarting the chip, for example)
+    // and carry their own target; hijacking one would strand the user somewhere
+    // they did not ask to be. Recovery mode is checked first, above.
+    //
+    // Auto-sleep is deliberately keyed on the wake source, not just the
+    // setting. A timer wake is unattended, so refresh and sleep straight away.
+    // A power-button wake means a human is holding the device, so stay awake
+    // afterwards and let Back reach the normal UI -- otherwise enabling
+    // dashboard mode with deep sleep on would lock the reader away behind a
+    // device that sleeps again before any button could be pressed.
+    const bool autoSleep = dashboardTimerWake && SETTINGS.dashboardDeepSleep;
+    LOG_INF("MAIN", "Dashboard mode (%s wake, autoSleep=%d)", dashboardTimerWake ? "timer" : "button",
+            autoSleep ? 1 : 0);
+    activityManager.replaceActivity(std::make_unique<DashboardActivity>(renderer, mappedInputManager, autoSleep));
   } else if (rebootedFromPanic) {
     // If we rebooted from a panic, go to crash report screen to show the panic info
     activityManager.goToCrashReport();

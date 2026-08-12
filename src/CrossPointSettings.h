@@ -170,6 +170,18 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     QUICK_RESUME_SLEEP_SCREEN_COUNT
   };
 
+  // Dashboard refresh interval. Persisted by INDEX, so any new interval must be
+  // appended here and to the enumValues array in SettingsList.h, or existing
+  // saves are silently reinterpreted.
+  enum DASHBOARD_REFRESH {
+    DASHBOARD_REFRESH_5 = 0,
+    DASHBOARD_REFRESH_10 = 1,
+    DASHBOARD_REFRESH_15 = 2,
+    DASHBOARD_REFRESH_30 = 3,
+    DASHBOARD_REFRESH_60 = 4,
+    DASHBOARD_REFRESH_COUNT
+  };
+
   // Sleep screen settings
   uint8_t sleepScreen = DARK;
   // Night mode: inverted output polarity on the reading surfaces only
@@ -283,6 +295,28 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   // Quick Resume: keep current content visible with moon icon instead of showing a static sleep screen.
   uint8_t quickResumeSleepScreen = QUICK_RESUME_NEVER;
 
+  // --- X3 dashboard mode -------------------------------------------------
+  // Turns the device into a wireless display for a server-rendered 1-bit BMP.
+  // See docs/x3-dashboard-mode.md.
+  //
+  // Off by default: this changes what the device does on wake, so it must be
+  // opted into rather than surprising anyone who flashes this build.
+  uint8_t dashboardEnabled = 0;
+  // Refresh interval, DASHBOARD_REFRESH enum index (not minutes -- the index is
+  // what gets persisted, so new intervals must be APPENDED to the enum).
+  uint8_t dashboardRefreshMinutes = DASHBOARD_REFRESH_15;
+  // Seconds to wait for a Wi-Fi association before giving up on this cycle.
+  uint8_t dashboardWifiTimeoutSeconds = 30;
+  // Seconds to wait for the HTTP download before giving up on this cycle.
+  uint8_t dashboardHttpTimeoutSeconds = 20;
+  // 0 keeps the device awake after a refresh, for firmware development. The
+  // panel is useless as a battery dashboard in this mode -- it exists so you can
+  // iterate without power-cycling between every build.
+  uint8_t dashboardDeepSleep = 1;
+  // Image URL. HTTPS is verified against the CA bundle by HttpDownloader; do not
+  // downgrade this to http:// for anything but local debugging.
+  char dashboardUrl[128] = "https://dashboard-data-api.vercel.app/api/x3.bmp";
+
   static constexpr uint8_t MIN_SLEEP_TIMEOUT_MINUTES = 1;
   static constexpr uint8_t SLEEP_TIMEOUT_NEVER_MINUTES = 31;
   static constexpr uint8_t MAX_SLEEP_TIMEOUT_MINUTES = SLEEP_TIMEOUT_NEVER_MINUTES;
@@ -354,6 +388,9 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   float getReaderLineCompression() const;
   unsigned long getSleepTimeoutMs() const;
   int getRefreshFrequency() const;
+
+  // Dashboard refresh interval in minutes, resolved from the persisted enum index.
+  uint16_t getDashboardRefreshMinutes() const;
 };
 
 // Helper macro to access settings
