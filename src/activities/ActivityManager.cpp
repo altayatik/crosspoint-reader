@@ -19,6 +19,7 @@
 #include "reader/ReaderActivity.h"
 #include "settings/OpdsServerListActivity.h"
 #include "settings/SettingsActivity.h"
+#include "dashboard/DashboardActivity.h"
 #include "util/FullScreenMessageActivity.h"
 
 static portMUX_TYPE activityManagerSpinlock = portMUX_INITIALIZER_UNLOCKED;
@@ -195,6 +196,12 @@ void ActivityManager::goToFileTransfer() {
 }
 
 void ActivityManager::goToSettings() { replaceActivity(std::make_unique<SettingsActivity>(renderer, mappedInput)); }
+
+// autoSleep is false: a menu launch means a human is present, so stay awake
+// and let Back return here rather than sleeping in their hand.
+void ActivityManager::goToDashboard() {
+  replaceActivity(std::make_unique<DashboardActivity>(renderer, mappedInput, /*autoSleep=*/false));
+}
 
 void ActivityManager::goToFileBrowser(std::string path) {
   replaceActivity(std::make_unique<FileBrowserActivity>(renderer, mappedInput, std::move(path)));

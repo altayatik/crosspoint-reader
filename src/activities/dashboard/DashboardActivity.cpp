@@ -320,6 +320,15 @@ bool DashboardActivity::displayImage() {
   renderer.clearScreen();
   renderer.drawBitmap(bitmap, x, y, pageWidth, pageHeight, 0, 0);
 
+  // Button hints, but only when someone is holding the device. Unattended, the
+  // panel should be nothing but dashboard -- hints on a wall display are noise,
+  // and drawing them would waste the bottom band the server layout already
+  // leaves blank for exactly this purpose.
+  if (!autoSleep) {
+    const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_DASHBOARD_REFRESH_BTN), "", "");
+    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  }
+
   // HALF is the single-pass clean waveform the OEM firmware uses for its sleep
   // image. FAST is differential and would accumulate artifacts over hundreds of
   // unattended updates; FULL runs the multi-flash GC waveform and blinks. See
@@ -347,7 +356,9 @@ void DashboardActivity::showStatus(const char* message) const {
   const auto pageHeight = renderer.getScreenHeight();
   renderer.clearScreen();
   renderer.drawCenteredText(UI_10_FONT_ID, pageHeight / 2, message);
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_FORCE_REFRESH), "", "");
+  // Not STR_FORCE_REFRESH ("Refresh Screen") -- it overflows the button hint
+  // slot and gets clipped mid-word on the panel.
+  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_DASHBOARD_REFRESH_BTN), "", "");
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   renderer.displayBuffer(HalDisplay::HALF_REFRESH);
 }
