@@ -39,6 +39,17 @@ bool HalClock::getTime(uint8_t& hour, uint8_t& minute) const {
   return true;
 }
 
+bool HalClock::getDateTime(Rtc::DateTime& out) const {
+  if (!_available) return false;
+  if (!_sdkRtc.now(out)) return false;
+  // Keep the hour/minute cache warm off the same read.
+  _cachedHour = out.hour;
+  _cachedMinute = out.minute;
+  _lastPollMs = millis();
+  _hasCachedTime = true;
+  return true;
+}
+
 bool HalClock::formatTime(char* buf, size_t bufSize, uint8_t utcOffsetQuarterHoursBiased, bool use12Hour) const {
   if (bufSize < (use12Hour ? 9u : 6u)) return false;
   uint8_t h, m;

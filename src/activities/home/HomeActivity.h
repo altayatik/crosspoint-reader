@@ -38,8 +38,6 @@ class HomeActivity final : public Activity {
     int i = 0;
     if (item == HomeMenuItem::FILE_BROWSER) return i;
     ++i;
-    if (item == HomeMenuItem::RECENTS) return i;
-    ++i;
     if (item == HomeMenuItem::OPDS_BROWSER) return hasOpdsUrl ? i : 0;
     if (hasOpdsUrl) ++i;
     if (item == HomeMenuItem::FILE_TRANSFER) return i;
@@ -47,6 +45,16 @@ class HomeActivity final : public Activity {
     if (item == HomeMenuItem::SETTINGS_MENU) return i;
     ++i;
     if (item == HomeMenuItem::DASHBOARD) return i;
+    ++i;
+    if (item == HomeMenuItem::CALENDAR) return i;
+    ++i;
+    if (item == HomeMenuItem::WORLDCLOCK) return i;
+    ++i;
+    if (item == HomeMenuItem::TIMER) return i;
+    ++i;
+    if (item == HomeMenuItem::WEATHER) return i;
+    ++i;
+    if (item == HomeMenuItem::PET) return i;
     return 0;
   }
 
@@ -54,11 +62,15 @@ class HomeActivity final : public Activity {
   static HomeMenuItem indexToMenuItem(int idx, bool hasOpdsUrl) {
     int i = 0;
     if (idx == i++) return HomeMenuItem::FILE_BROWSER;
-    if (idx == i++) return HomeMenuItem::RECENTS;
     if (hasOpdsUrl && idx == i++) return HomeMenuItem::OPDS_BROWSER;
     if (idx == i++) return HomeMenuItem::FILE_TRANSFER;
     if (idx == i++) return HomeMenuItem::SETTINGS_MENU;
-    if (idx == i) return HomeMenuItem::DASHBOARD;
+    if (idx == i++) return HomeMenuItem::DASHBOARD;
+    if (idx == i++) return HomeMenuItem::CALENDAR;
+    if (idx == i++) return HomeMenuItem::WORLDCLOCK;
+    if (idx == i++) return HomeMenuItem::TIMER;
+    if (idx == i++) return HomeMenuItem::WEATHER;
+    if (idx == i) return HomeMenuItem::PET;
     return HomeMenuItem::NONE;
   }
   void onSelectBook(const std::string& path);
@@ -66,6 +78,11 @@ class HomeActivity final : public Activity {
   void onRecentsOpen();
   void onSettingsOpen();
   void onDashboardOpen();
+  void onCalendarOpen();
+  void onWorldClockOpen();
+  void onTimerOpen();
+  void onWeatherOpen();
+  void onPetOpen();
   void onFileTransferOpen();
   void onOpdsBrowserOpen();
 

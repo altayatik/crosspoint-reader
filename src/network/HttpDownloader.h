@@ -41,7 +41,15 @@ class HttpDownloader {
   /**
    * Download a file to the SD card with optional credentials.
    */
+  /**
+   * Download a file to the SD card with optional credentials.
+   *
+   * timeoutMs bounds each socket operation (0 keeps the 60s default, which is
+   * tuned for slow OPDS catalogues). Callers that would rather fail fast and
+   * retry -- an unattended dashboard refresh, say -- should pass their own.
+   */
   static DownloadError downloadToFile(const std::string& url, const std::string& destPath,
                                       ProgressCallback progress = nullptr, bool* cancelFlag = nullptr,
-                                      const std::string& username = "", const std::string& password = "");
+                                      const std::string& username = "", const std::string& password = "",
+                                      uint32_t timeoutMs = 0);
 };

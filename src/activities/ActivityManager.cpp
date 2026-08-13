@@ -19,7 +19,10 @@
 #include "reader/ReaderActivity.h"
 #include "settings/OpdsServerListActivity.h"
 #include "settings/SettingsActivity.h"
+#include "calendar/CalendarActivity.h"
 #include "dashboard/DashboardActivity.h"
+#include "timer/TimerActivity.h"
+#include "worldclock/WorldClockActivity.h"
 #include "util/FullScreenMessageActivity.h"
 
 static portMUX_TYPE activityManagerSpinlock = portMUX_INITIALIZER_UNLOCKED;
@@ -202,6 +205,16 @@ void ActivityManager::goToSettings() { replaceActivity(std::make_unique<Settings
 void ActivityManager::goToDashboard() {
   replaceActivity(std::make_unique<DashboardActivity>(renderer, mappedInput, /*autoSleep=*/false));
 }
+
+void ActivityManager::goToCalendar() { replaceActivity(std::make_unique<CalendarActivity>(renderer, mappedInput)); }
+
+void ActivityManager::goToWorldClock() { replaceActivity(std::make_unique<WorldClockActivity>(renderer, mappedInput)); }
+
+void ActivityManager::goToTimer() { replaceActivity(std::make_unique<TimerActivity>(renderer, mappedInput)); }
+
+void ActivityManager::goToWeather() { replaceActivity(std::make_unique<WeatherActivity>(renderer, mappedInput)); }
+
+void ActivityManager::goToPet() { replaceActivity(std::make_unique<PetActivity>(renderer, mappedInput)); }
 
 void ActivityManager::goToFileBrowser(std::string path) {
   replaceActivity(std::make_unique<FileBrowserActivity>(renderer, mappedInput, std::move(path)));

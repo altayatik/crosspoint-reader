@@ -49,6 +49,12 @@ class DashboardActivity final : public Activity {
   /** One complete wake-connect-fetch-display cycle. Never throws, never hangs. */
   Outcome refresh();
 
+  /** dashboardUrl with the theme override appended, if one is set. */
+  std::string buildUrl() const;
+
+  /** Advance the persisted theme override: Auto -> Light -> Night -> Auto. */
+  void cycleTheme();
+
   bool connectWifi();
   void shutdownWifi() const;
 

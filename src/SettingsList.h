@@ -331,6 +331,10 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
                           "dashboardRefreshMinutes", StrId::STR_CAT_SYSTEM),
         SettingInfo::Toggle(StrId::STR_DASHBOARD_DEEP_SLEEP, &CrossPointSettings::dashboardDeepSleep,
                             "dashboardDeepSleep", StrId::STR_CAT_SYSTEM),
+        SettingInfo::Enum(StrId::STR_DASHBOARD_THEME, &CrossPointSettings::dashboardTheme,
+                          {StrId::STR_DASHBOARD_THEME_AUTO, StrId::STR_DASHBOARD_THEME_LIGHT,
+                           StrId::STR_DASHBOARD_THEME_DARK},
+                          "dashboardTheme", StrId::STR_CAT_SYSTEM),
         // Timeouts and URL: persisted + web-exposed, hidden from the on-device
         // list. Nobody is dialling a timeout in on the device.
         SettingInfo::String(StrId::STR_DASHBOARD_URL, &SETTINGS.dashboardUrl[0], sizeof(SETTINGS.dashboardUrl),

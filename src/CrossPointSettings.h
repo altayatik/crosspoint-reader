@@ -182,6 +182,15 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     DASHBOARD_REFRESH_COUNT
   };
 
+  // Dashboard theme override. AUTO omits ?theme= entirely so the server keeps
+  // deciding from the sun; the other two pin it.
+  enum DASHBOARD_THEME {
+    DASHBOARD_THEME_AUTO = 0,
+    DASHBOARD_THEME_LIGHT = 1,
+    DASHBOARD_THEME_DARK = 2,
+    DASHBOARD_THEME_COUNT
+  };
+
   // Sleep screen settings
   uint8_t sleepScreen = DARK;
   // Night mode: inverted output polarity on the reading surfaces only
@@ -309,6 +318,9 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t dashboardWifiTimeoutSeconds = 30;
   // Seconds to wait for the HTTP download before giving up on this cycle.
   uint8_t dashboardHttpTimeoutSeconds = 20;
+  // Theme override, DASHBOARD_THEME index. Appended to the request as
+  // ?theme=; AUTO sends nothing and lets the server decide from sunset.
+  uint8_t dashboardTheme = DASHBOARD_THEME_AUTO;
   // 0 keeps the device awake after a refresh, for firmware development. The
   // panel is useless as a battery dashboard in this mode -- it exists so you can
   // iterate without power-cycling between every build.

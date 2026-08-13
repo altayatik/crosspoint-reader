@@ -39,6 +39,11 @@ struct Sink {
   bool* cancelFlag = nullptr;
   size_t total = 0;
   size_t downloaded = 0;
+  // 0 = use HTTP_TIMEOUT_MS. Per socket operation, not for the whole transfer.
+  uint32_t timeoutMs = 0;
+  // 0 = no deadline. Absolute millis() value bounding the entire transfer,
+  // checked in the read loop so a slow drip cannot outlive it either.
+  unsigned long deadlineMs = 0;
 };
 
 bool isRedirect(int status) {
@@ -121,7 +126,7 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
   config.url = url.c_str();
   config.buffer_size = HTTP_RX_BUF;
   config.buffer_size_tx = HTTP_TX_BUF;
-  config.timeout_ms = HTTP_TIMEOUT_MS;
+  config.timeout_ms = sink.timeoutMs > 0 ? static_cast<int>(sink.timeoutMs) : HTTP_TIMEOUT_MS;
   // Verify HTTPS against the bundled CA roots. This build has esp-tls
   // CONFIG_ESP_TLS_INSECURE off, so an unverified TLS handshake can't be set
   // up at all; the model is public servers over verified https and local
@@ -188,6 +193,11 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
 
   while (true) {
     if (sink.cancelFlag && *sink.cancelFlag) {
+      esp_http_client_cleanup(client);
+      return HttpDownloader::ABORTED;
+    }
+    if (sink.deadlineMs && static_cast<long>(millis() - sink.deadlineMs) > 0) {
+      LOG_ERR("HTTP", "deadline exceeded after %zu bytes", sink.downloaded);
       esp_http_client_cleanup(client);
       return HttpDownloader::ABORTED;
     }
@@ -260,7 +270,8 @@ bool HttpDownloader::fetchUrl(const std::string& url, const DataCallback& onData
 
 HttpDownloader::DownloadError HttpDownloader::downloadToFile(const std::string& url, const std::string& destPath,
                                                              ProgressCallback progress, bool* cancelFlag,
-                                                             const std::string& username, const std::string& password) {
+                                                             const std::string& username, const std::string& password,
+                                                             const uint32_t timeoutMs) {
   LOG_DBG("HTTP", "Downloading: %s -> %s", url.c_str(), destPath.c_str());
 
   if (Storage.exists(destPath.c_str())) {
@@ -275,6 +286,10 @@ HttpDownloader::DownloadError HttpDownloader::downloadToFile(const std::string& 
   Sink sink;
   sink.progress = std::move(progress);
   sink.cancelFlag = cancelFlag;
+  sink.timeoutMs = timeoutMs;
+  // Whole-transfer budget: generous enough that a merely slow server still
+  // completes, tight enough that a dead one does not hold the device open.
+  if (timeoutMs > 0) sink.deadlineMs = millis() + timeoutMs * 3UL;
   sink.write = [&file](const uint8_t* data, size_t len) { return file.write(data, len) == len; };
 
   const DownloadError result = runGetSecure(url, username, password, sink);

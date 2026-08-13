@@ -128,6 +128,20 @@ void DashboardActivity::loop() {
     return;
   }
 
+  // Night-mode toggle. Cycles the override and immediately re-fetches, because
+  // the theme is decided server-side -- there is nothing to invert locally.
+  if (mappedInput.wasReleased(MappedInputManager::Button::Right)) {
+    cycleTheme();
+    busy = true;
+    lastOutcome = refresh();
+    busy = false;
+    shutdownWifi();
+    if (lastOutcome != Outcome::Displayed && lastOutcome != Outcome::Unchanged) {
+      showStatus(outcomeName(lastOutcome));
+    }
+    return;
+  }
+
   if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
     activityManager.goHome();
   }
@@ -160,7 +174,7 @@ DashboardActivity::Outcome DashboardActivity::refresh() {
   }
 
   showBanner(tr(STR_DASHBOARD_FETCHING));
-  const std::string url(SETTINGS.dashboardUrl);
+  const std::string url = buildUrl();
   if (url.empty()) {
     LOG_ERR("DSH", "No dashboard URL configured");
     return Outcome::FetchFailed;
@@ -174,6 +188,40 @@ DashboardActivity::Outcome DashboardActivity::refresh() {
 }
 
 // ---------------------------------------------------------------------------
+
+std::string DashboardActivity::buildUrl() const {
+  std::string url(SETTINGS.dashboardUrl);
+  if (url.empty()) return url;
+
+  // AUTO sends no parameter at all, so the server keeps deciding from the sun.
+  // Only an explicit override is worth putting on the wire -- and leaving the
+  // URL untouched means the CDN keeps one cache entry instead of three.
+  const char* theme = nullptr;
+  switch (SETTINGS.dashboardTheme) {
+    case CrossPointSettings::DASHBOARD_THEME_LIGHT:
+      theme = "light";
+      break;
+    case CrossPointSettings::DASHBOARD_THEME_DARK:
+      theme = "dark";
+      break;
+    default:
+      return url;
+  }
+
+  // The URL is user-editable and may already carry a query string.
+  url += (url.find('?') == std::string::npos) ? '?' : '&';
+  url += "theme=";
+  url += theme;
+  return url;
+}
+
+void DashboardActivity::cycleTheme() {
+  // Auto -> Light -> Night -> Auto. Persisted, because an override that reset
+  // on every wake would be useless on a device that spends its life asleep.
+  SETTINGS.dashboardTheme = (SETTINGS.dashboardTheme + 1) % CrossPointSettings::DASHBOARD_THEME_COUNT;
+  SETTINGS.saveToFile();
+  LOG_INF("DSH", "Theme override now %u", SETTINGS.dashboardTheme);
+}
 
 bool DashboardActivity::connectWifi() {
   WIFI_STORE.loadFromFile();
@@ -237,22 +285,22 @@ void DashboardActivity::shutdownWifi() const {
 bool DashboardActivity::download(const std::string& url) {
   Storage.remove(TEMP_PATH);
 
-  // HttpDownloader has no timeout parameter, so bound the transfer with the
-  // cancel flag it polls between chunks. Captured by pointer and flipped from
-  // the progress callback, which fires after every chunk.
-  bool cancel = false;
-  const unsigned long deadline =
-      millis() + std::max<unsigned long>(5, SETTINGS.dashboardHttpTimeoutSeconds) * 1000UL;
+  // The timeout goes to HttpDownloader, which pushes it into
+  // esp_http_client_config_t::timeout_ms and derives a whole-transfer deadline
+  // from it.
+  //
+  // An earlier version tried to enforce this from the progress callback by
+  // flipping a cancel flag. That did not work: the callback only fires once
+  // bytes are arriving AND a Content-Length was present, so it could never
+  // interrupt the case that actually matters -- a server that completes the TLS
+  // handshake and then goes quiet. The device sat on the default 60s
+  // per-operation timeout with the "Fetching dashboard" banner up, which looked
+  // exactly like a hang.
+  const uint32_t timeoutMs = std::max<uint32_t>(5, SETTINGS.dashboardHttpTimeoutSeconds) * 1000U;
 
-  const auto onProgress = [&cancel, deadline](size_t downloaded, size_t total) {
-    (void)downloaded;
-    (void)total;
-    if (millis() > deadline) cancel = true;
-  };
-
-  const auto error = HttpDownloader::downloadToFile(url, TEMP_PATH, onProgress, &cancel);
+  const auto error = HttpDownloader::downloadToFile(url, TEMP_PATH, nullptr, nullptr, "", "", timeoutMs);
   if (error != HttpDownloader::OK) {
-    LOG_ERR("DSH", "Download failed (%d)%s", static_cast<int>(error), cancel ? " [timed out]" : "");
+    LOG_ERR("DSH", "Download failed (%d)", static_cast<int>(error));
     Storage.remove(TEMP_PATH);
     return false;
   }
@@ -325,7 +373,8 @@ bool DashboardActivity::displayImage() {
   // and drawing them would waste the bottom band the server layout already
   // leaves blank for exactly this purpose.
   if (!autoSleep) {
-    const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_DASHBOARD_REFRESH_BTN), "", "");
+    const auto labels =
+        mappedInput.mapLabels(tr(STR_BACK), tr(STR_DASHBOARD_REFRESH_BTN), "", tr(STR_DASHBOARD_NIGHT_BTN));
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   }
 

@@ -21,7 +21,7 @@
 #include "fontIds.h"
 
 int HomeActivity::getMenuItemCount() const {
-  int count = 5;  // File Browser, Recents, File transfer, Settings, Dashboard
+  int count = 9;  // Browser, Transfer, Settings, Dashboard, Calendar, Clock, Timer, Weather, Pet
   if (!recentBooks.empty()) {
     count += recentBooks.size();
   }
@@ -114,7 +114,8 @@ void HomeActivity::onEnter() {
   hasOpdsServers = OPDS_STORE.hasServers();
 
   const auto& metrics = UITheme::getInstance().getMetrics();
-  loadRecentBooks(metrics.homeRecentBooksCount);
+  // Dashboard build: no recent books on Home. Same state as a fresh device.
+  loadRecentBooks(0);
 
   const auto base = static_cast<int>(recentBooks.size());
   selectorIndex = initialMenuItem == HomeMenuItem::NONE ? 0 : base + menuItemToIndex(initialMenuItem, hasOpdsServers);
@@ -194,6 +195,21 @@ void HomeActivity::loop() {
         break;
       case HomeMenuItem::DASHBOARD:
         onDashboardOpen();
+        break;
+      case HomeMenuItem::CALENDAR:
+        onCalendarOpen();
+        break;
+      case HomeMenuItem::WORLDCLOCK:
+        onWorldClockOpen();
+        break;
+      case HomeMenuItem::TIMER:
+        onTimerOpen();
+        break;
+      case HomeMenuItem::WEATHER:
+        onWeatherOpen();
+        break;
+      case HomeMenuItem::PET:
+        onPetOpen();
         break;
       default:
         break;
@@ -303,15 +319,18 @@ void HomeActivity::render(RenderLock&&) {
                           std::bind(&HomeActivity::storeCoverBuffer, this));
 
   // Build menu items dynamically
-  std::vector<const char*> menuItems = {tr(STR_BROWSE_FILES), tr(STR_MENU_RECENT_BOOKS), tr(STR_FILE_TRANSFER),
-                                        tr(STR_SETTINGS_TITLE), tr(STR_DASHBOARD_MENU)};
-  // No dedicated dashboard glyph in the icon set; Transfer reads as "over the
-  // network", which is what this does.
-  std::vector<UIIcon> menuIcons = {Folder, Recent, Transfer, Settings, Transfer};
+  // Recents dropped: this device is a dashboard, not a reader.
+  std::vector<const char*> menuItems = {tr(STR_BROWSE_FILES),   tr(STR_FILE_TRANSFER),   tr(STR_SETTINGS_TITLE),
+                                        tr(STR_DASHBOARD_MENU), tr(STR_CALENDAR_MENU),   tr(STR_WORLDCLOCK_MENU),
+                                        tr(STR_TIMER_MENU),      tr(STR_WEATHER_MENU),
+                                        tr(STR_PET_MENU)};
+  // The icon set has no calendar/clock/timer glyphs, so these reuse the closest
+  // existing marks rather than shipping four half-drawn 24px bitmaps.
+  std::vector<UIIcon> menuIcons = {Folder, Transfer, Settings, Transfer, Recent, Recent, Recent, Transfer, Book};
 
   if (hasOpdsServers) {
-    menuItems.insert(menuItems.begin() + 2, tr(STR_OPDS_BROWSER));
-    menuIcons.insert(menuIcons.begin() + 2, Library);
+    menuItems.insert(menuItems.begin() + 1, tr(STR_OPDS_BROWSER));
+    menuIcons.insert(menuIcons.begin() + 1, Library);
   }
 
   if (metrics.homeContinueReadingInMenu && !recentBooks.empty()) {
@@ -354,6 +373,16 @@ void HomeActivity::onRecentsOpen() { activityManager.goToRecentBooks(); }
 void HomeActivity::onSettingsOpen() { activityManager.goToSettings(); }
 
 void HomeActivity::onDashboardOpen() { activityManager.goToDashboard(); }
+
+void HomeActivity::onCalendarOpen() { activityManager.goToCalendar(); }
+
+void HomeActivity::onWorldClockOpen() { activityManager.goToWorldClock(); }
+
+void HomeActivity::onTimerOpen() { activityManager.goToTimer(); }
+
+void HomeActivity::onWeatherOpen() { activityManager.goToWeather(); }
+
+void HomeActivity::onPetOpen() { activityManager.goToPet(); }
 
 void HomeActivity::onFileTransferOpen() { activityManager.goToFileTransfer(); }
 
