@@ -21,7 +21,9 @@
 #include "settings/SettingsActivity.h"
 #include "calendar/CalendarActivity.h"
 #include "dashboard/DashboardActivity.h"
+#include "pet/PetActivity.h"
 #include "timer/TimerActivity.h"
+#include "weather/WeatherActivity.h"
 #include "worldclock/WorldClockActivity.h"
 #include "util/FullScreenMessageActivity.h"
 

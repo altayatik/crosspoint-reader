@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <string>
 
 #include "components/UITheme.h"
 #include "fontIds.h"
