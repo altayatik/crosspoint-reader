@@ -328,6 +328,10 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   // Image URL. HTTPS is verified against the CA bundle by HttpDownloader; do not
   // downgrade this to http:// for anything but local debugging.
   char dashboardUrl[128] = "https://dashboard-data-api.vercel.app/api/x3.bmp";
+  // City for the weather app, passed straight through to the server as ?city=
+  // and geocoded there. Empty means "whatever the dashboard is configured for",
+  // which keeps the two screens agreeing by default.
+  char weatherCity[48] = "";
 
   static constexpr uint8_t MIN_SLEEP_TIMEOUT_MINUTES = 1;
   static constexpr uint8_t SLEEP_TIMEOUT_NEVER_MINUTES = 31;

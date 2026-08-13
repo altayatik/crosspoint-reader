@@ -354,14 +354,84 @@ DashboardActivity::Outcome DashboardActivity::commitDownload() {
 }
 
 bool DashboardActivity::displayImage() {
-  HalFile file;
-  if (!Storage.openFileForRead("DSH", LIVE_PATH, file)) return false;
+  // The actual drawing happens in render(), on the render task, under the
+  // render lock. Block here until it has finished so refresh() can report the
+  // outcome truthfully.
+  phase = Phase::Image;
+  imagePainted = false;
+  requestUpdateAndWait();
+  return imagePainted;
+}
 
-  Bitmap bitmap(file);
-  if (bitmap.parseHeaders() != BmpReaderError::Ok) return false;
+// ---------------------------------------------------------------------------
 
+void DashboardActivity::showBanner(const char* text) {
+  // Every banner costs a real e-ink refresh. On the unattended path that would
+  // mean the panel visibly flashes twice on its way to painting the frame --
+  // every fifteen minutes, on a wall, with nobody watching. Progress is only
+  // worth showing when a human is actually holding the device.
+  if (autoSleep) return;
+
+  phase = Phase::Banner;
+  message = text;
+  requestUpdateAndWait();
+}
+
+void DashboardActivity::showStatus(const char* text) {
+  phase = Phase::Status;
+  message = text;
+  requestUpdateAndWait();
+}
+
+const char* DashboardActivity::themeLabel() const {
+  switch (SETTINGS.dashboardTheme) {
+    case CrossPointSettings::DASHBOARD_THEME_LIGHT:
+      return tr(STR_DASHBOARD_THEME_LIGHT);
+    case CrossPointSettings::DASHBOARD_THEME_DARK:
+      return tr(STR_DASHBOARD_THEME_DARK);
+    default:
+      return tr(STR_DASHBOARD_THEME_AUTO);
+  }
+}
+
+void DashboardActivity::render(RenderLock&&) {
   const auto pageWidth = renderer.getScreenWidth();
   const auto pageHeight = renderer.getScreenHeight();
+
+  switch (phase) {
+    case Phase::Banner: {
+      // Nothing to say yet (the unattended path never sets a message): leave
+      // the panel showing the previous frame rather than flashing it blank.
+      if (message == nullptr) return;
+      // The previous dashboard stays visible under the popup, so a failed cycle
+      // degrades to "yesterday's numbers with a banner" rather than a blank
+      // screen. drawPopup ends in displayBuffer().
+      GUI.drawPopup(renderer, message);
+      return;
+    }
+
+    case Phase::Status: {
+      renderer.clearScreen();
+      renderer.drawCenteredText(UI_10_FONT_ID, pageHeight / 2, message == nullptr ? "" : message);
+      // Not STR_FORCE_REFRESH ("Refresh Screen") -- it overflows the button
+      // hint slot and gets clipped mid-word on the panel.
+      const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_DASHBOARD_REFRESH_BTN), "", themeLabel());
+      GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+      renderer.displayBuffer(HalDisplay::HALF_REFRESH);
+      return;
+    }
+
+    case Phase::Image:
+    default:
+      break;
+  }
+
+  HalFile file;
+  if (!Storage.openFileForRead("DSH", LIVE_PATH, file)) return;
+
+  Bitmap bitmap(file);
+  if (bitmap.parseHeaders() != BmpReaderError::Ok) return;
+
   const int x = std::max(0, (pageWidth - bitmap.getWidth()) / 2);
   const int y = std::max(0, (pageHeight - bitmap.getHeight()) / 2);
 
@@ -373,8 +443,7 @@ bool DashboardActivity::displayImage() {
   // and drawing them would waste the bottom band the server layout already
   // leaves blank for exactly this purpose.
   if (!autoSleep) {
-    const auto labels =
-        mappedInput.mapLabels(tr(STR_BACK), tr(STR_DASHBOARD_REFRESH_BTN), "", tr(STR_DASHBOARD_NIGHT_BTN));
+    const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_DASHBOARD_REFRESH_BTN), "", themeLabel());
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   }
 
@@ -383,33 +452,7 @@ bool DashboardActivity::displayImage() {
   // unattended updates; FULL runs the multi-flash GC waveform and blinks. See
   // SleepActivity::renderBitmapSleepScreen for the same reasoning.
   renderer.displayBuffer(HalDisplay::HALF_REFRESH);
-  return true;
-}
-
-// ---------------------------------------------------------------------------
-
-void DashboardActivity::showBanner(const char* message) const {
-  // GUI.drawPopup() ends in renderer.displayBuffer(), so every banner costs a
-  // real e-ink refresh. On the unattended path that would mean the panel
-  // visibly flashes twice on its way to painting the frame -- every fifteen
-  // minutes, on a wall, with nobody watching. Progress is only worth showing
-  // when a human is actually holding the device.
-  if (autoSleep) return;
-
-  // The previous dashboard stays visible under the popup, so a failed cycle
-  // degrades to "yesterday's numbers with a banner" rather than a blank screen.
-  GUI.drawPopup(renderer, message);
-}
-
-void DashboardActivity::showStatus(const char* message) const {
-  const auto pageHeight = renderer.getScreenHeight();
-  renderer.clearScreen();
-  renderer.drawCenteredText(UI_10_FONT_ID, pageHeight / 2, message);
-  // Not STR_FORCE_REFRESH ("Refresh Screen") -- it overflows the button hint
-  // slot and gets clipped mid-word on the panel.
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_DASHBOARD_REFRESH_BTN), "", "");
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
-  renderer.displayBuffer(HalDisplay::HALF_REFRESH);
+  imagePainted = true;
 }
 
 const char* DashboardActivity::outcomeName(const Outcome outcome) {

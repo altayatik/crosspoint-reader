@@ -45,9 +45,20 @@ int WorldClockActivity::utcMinutesNow() const {
   uint8_t biased = SETTINGS.clockUtcOffsetQ;
   if (biased > 104) biased = 48;
   const int localOffsetMinutes = (static_cast<int>(biased) - 48) * 15;
+  // Remembered so render() can work out which zones are on a different calendar
+  // day from the one the user is standing in.
+  homeOffsetMinutes = localOffsetMinutes;
 
   int minutes = static_cast<int>(hour) * 60 + static_cast<int>(minute) - localOffsetMinutes;
   return ((minutes % 1440) + 1440) % 1440;
+}
+
+int WorldClockActivity::dayOffsetFor(const int zoneOffsetMinutes) const {
+  // floorDiv, not integer division: a zone that is behind UTC midnight gives a
+  // negative numerator, and C++ truncation toward zero would report 0 instead
+  // of -1 for the whole of the previous day.
+  const auto floorDiv = [](const int value) { return value >= 0 ? value / 1440 : -(((-value) + 1439) / 1440); };
+  return floorDiv(utcMinutes + zoneOffsetMinutes) - floorDiv(utcMinutes + homeOffsetMinutes);
 }
 
 void WorldClockActivity::loop() {
@@ -115,10 +126,15 @@ void WorldClockActivity::render(RenderLock&&) {
     const int clockW = renderer.getTextWidth(UI_12_FONT_ID, clock);
     renderer.drawText(UI_12_FONT_ID, pageWidth - margin - clockW, baseline, clock);
 
-    // Mark zones whose offset may be wrong right now rather than presenting a
-    // possibly-hour-off time as fact.
-    if (zone.observesDst) {
-      renderer.drawText(SMALL_FONT_ID, pageWidth - margin - clockW - 22, baseline, "~");
+    // Day rollover relative to where the user is standing. This is the thing
+    // that actually catches people out when calling abroad -- far more useful
+    // than flagging which zones might be an hour off for DST.
+    const int dayDelta = dayOffsetFor(zone.offsetMinutes);
+    if (dayDelta != 0) {
+      char marker[4];
+      snprintf(marker, sizeof(marker), "%+d", dayDelta);
+      const int markerW = renderer.getTextWidth(SMALL_FONT_ID, marker);
+      renderer.drawText(SMALL_FONT_ID, pageWidth - margin - clockW - markerW - 10, baseline, marker);
     }
 
     if (i + 1 < ZONE_COUNT) {

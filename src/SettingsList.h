@@ -339,6 +339,10 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
         // list. Nobody is dialling a timeout in on the device.
         SettingInfo::String(StrId::STR_DASHBOARD_URL, &SETTINGS.dashboardUrl[0], sizeof(SETTINGS.dashboardUrl),
                             "dashboardUrl"),
+        // Edited from the Weather screen itself rather than the settings list,
+        // so category-less: persisted and web-editable, hidden on device.
+        SettingInfo::String(StrId::STR_WEATHER_CITY, &SETTINGS.weatherCity[0], sizeof(SETTINGS.weatherCity),
+                            "weatherCity"),
         SettingInfo::Value(StrId::STR_DASHBOARD_WIFI_TIMEOUT, &CrossPointSettings::dashboardWifiTimeoutSeconds,
                            {5, 120, 5}, "dashboardWifiTimeoutSeconds"),
         SettingInfo::Value(StrId::STR_DASHBOARD_HTTP_TIMEOUT, &CrossPointSettings::dashboardHttpTimeoutSeconds,

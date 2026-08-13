@@ -31,6 +31,11 @@ class HomeActivity final : public Activity {
   int coverRectW = 0;
   int coverRectH = 0;
   std::vector<RecentBook> recentBooks;
+  // Index of the first menu row drawn. The menu is taller than the panel once
+  // the app entries are added, so render() windows it around selectorIndex.
+  // Owned by render() rather than loop() because only render() knows how many
+  // rows actually fit.
+  mutable int menuScroll = 0;
   const HomeMenuItem initialMenuItem;
 
   // Convert HomeMenuItem to menu index (used in onEnter)
@@ -54,6 +59,8 @@ class HomeActivity final : public Activity {
     ++i;
     if (item == HomeMenuItem::WEATHER) return i;
     ++i;
+    if (item == HomeMenuItem::NEWS) return i;
+    ++i;
     if (item == HomeMenuItem::PET) return i;
     return 0;
   }
@@ -70,6 +77,7 @@ class HomeActivity final : public Activity {
     if (idx == i++) return HomeMenuItem::WORLDCLOCK;
     if (idx == i++) return HomeMenuItem::TIMER;
     if (idx == i++) return HomeMenuItem::WEATHER;
+    if (idx == i++) return HomeMenuItem::NEWS;
     if (idx == i) return HomeMenuItem::PET;
     return HomeMenuItem::NONE;
   }
@@ -82,6 +90,7 @@ class HomeActivity final : public Activity {
   void onWorldClockOpen();
   void onTimerOpen();
   void onWeatherOpen();
+  void onNewsOpen();
   void onPetOpen();
   void onFileTransferOpen();
   void onOpdsBrowserOpen();

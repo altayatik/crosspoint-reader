@@ -9,6 +9,7 @@
 #include <Utf8.h>
 #include <Xtc.h>
 
+#include <algorithm>
 #include <cstring>
 #include <vector>
 
@@ -21,7 +22,7 @@
 #include "fontIds.h"
 
 int HomeActivity::getMenuItemCount() const {
-  int count = 9;  // Browser, Transfer, Settings, Dashboard, Calendar, Clock, Timer, Weather, Pet
+  int count = 10;  // Browser, Transfer, Settings, Dashboard, Calendar, Clock, Timer, Weather, News, Pet
   if (!recentBooks.empty()) {
     count += recentBooks.size();
   }
@@ -208,6 +209,9 @@ void HomeActivity::loop() {
       case HomeMenuItem::WEATHER:
         onWeatherOpen();
         break;
+      case HomeMenuItem::NEWS:
+        onNewsOpen();
+        break;
       case HomeMenuItem::PET:
         onPetOpen();
         break;
@@ -267,17 +271,18 @@ void HomeActivity::loop() {
     return;
   }
 
-  const int menuTop = metrics.homeTopPadding + metrics.homeCoverTileHeight + metrics.homeMenuTopOffset;
-  const int renderedMenuSelection =
-      metrics.homeContinueReadingInMenu ? selectorIndex : selectorIndex - recentBooks.size();
+  // Must agree with render(): the cover band collapses to zero when there are
+  // no recents, and rows are drawn from menuScroll onward.
+  const int coverTileHeight = recentBooks.empty() ? 0 : metrics.homeCoverTileHeight;
+  const int menuTop = metrics.homeTopPadding + coverTileHeight + metrics.homeMenuTopOffset;
   const int renderedMenuCount =
       menuCount - (metrics.homeContinueReadingInMenu ? 0 : static_cast<int>(recentBooks.size()));
   int menuRow = -1;
   const auto menuTouch = mappedInput.rowTouch(menuRow, menuTop, metrics.menuRowHeight + metrics.menuSpacing,
                                               renderedMenuCount, 0, INT32_MAX, metrics.menuRowHeight);
   if (menuTouch != MappedInputManager::RowTouch::None) {
-    const int touchedIndex =
-        metrics.homeContinueReadingInMenu ? menuRow : menuRow + static_cast<int>(recentBooks.size());
+    const int touchedIndex = menuRow + menuScroll +
+                             (metrics.homeContinueReadingInMenu ? 0 : static_cast<int>(recentBooks.size()));
     if (menuTouch == MappedInputManager::RowTouch::Down) {
       if (selectorIndex != touchedIndex) {
         selectorIndex = touchedIndex;
@@ -301,32 +306,44 @@ void HomeActivity::render(RenderLock&&) {
   const auto pageHeight = renderer.getScreenHeight();
 
   renderer.clearScreen();
-  bool bufferRestored = coverBufferStored && restoreCoverBuffer();
+
+  // With recents disabled there is no cover to draw, and reserving its 400px
+  // band would both leave an empty tile at the top of the screen and push the
+  // last menu rows past the bottom of a 792px panel. Collapse it to zero.
+  const int coverTileHeight = recentBooks.empty() ? 0 : metrics.homeCoverTileHeight;
+
+  bool bufferRestored = false;
+  if (coverTileHeight > 0) {
+    bufferRestored = coverBufferStored && restoreCoverBuffer();
+  }
 
   GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.homeTopPadding},
                  metrics.homeContinueReadingInMenu && !recentBooks.empty() ? recentBooks[0].title.c_str() : nullptr);
 
-  // Record the tile rect so storeCoverBuffer (called from the theme) knows
-  // which sub-region of the framebuffer to snapshot. ~16 KB in Portrait
-  // instead of the 48 KB full framebuffer the previous bind captured.
-  coverRectX = 0;
-  coverRectY = metrics.homeTopPadding;
-  coverRectW = pageWidth;
-  coverRectH = metrics.homeCoverTileHeight;
+  if (coverTileHeight > 0) {
+    // Record the tile rect so storeCoverBuffer (called from the theme) knows
+    // which sub-region of the framebuffer to snapshot. ~16 KB in Portrait
+    // instead of the 48 KB full framebuffer the previous bind captured.
+    coverRectX = 0;
+    coverRectY = metrics.homeTopPadding;
+    coverRectW = pageWidth;
+    coverRectH = coverTileHeight;
 
-  GUI.drawRecentBookCover(renderer, Rect{0, metrics.homeTopPadding, pageWidth, metrics.homeCoverTileHeight},
-                          recentBooks, selectorIndex, coverRendered, coverBufferStored, bufferRestored,
-                          std::bind(&HomeActivity::storeCoverBuffer, this));
+    GUI.drawRecentBookCover(renderer, Rect{0, metrics.homeTopPadding, pageWidth, coverTileHeight}, recentBooks,
+                            selectorIndex, coverRendered, coverBufferStored, bufferRestored,
+                            std::bind(&HomeActivity::storeCoverBuffer, this));
+  }
 
   // Build menu items dynamically
   // Recents dropped: this device is a dashboard, not a reader.
-  std::vector<const char*> menuItems = {tr(STR_BROWSE_FILES),   tr(STR_FILE_TRANSFER),   tr(STR_SETTINGS_TITLE),
-                                        tr(STR_DASHBOARD_MENU), tr(STR_CALENDAR_MENU),   tr(STR_WORLDCLOCK_MENU),
-                                        tr(STR_TIMER_MENU),      tr(STR_WEATHER_MENU),
+  std::vector<const char*> menuItems = {tr(STR_BROWSE_FILES),    tr(STR_FILE_TRANSFER),   tr(STR_SETTINGS_TITLE),
+                                        tr(STR_DASHBOARD_MENU),  tr(STR_CALENDAR_MENU),   tr(STR_WORLDCLOCK_MENU),
+                                        tr(STR_TIMER_MENU),      tr(STR_WEATHER_MENU),    tr(STR_NEWS_MENU),
                                         tr(STR_PET_MENU)};
   // The icon set has no calendar/clock/timer glyphs, so these reuse the closest
-  // existing marks rather than shipping four half-drawn 24px bitmaps.
-  std::vector<UIIcon> menuIcons = {Folder, Transfer, Settings, Transfer, Recent, Recent, Recent, Transfer, Book};
+  // existing marks rather than shipping half-drawn 24px bitmaps.
+  std::vector<UIIcon> menuIcons = {Folder, Transfer, Settings, Transfer, Recent,
+                                   Recent, Recent,   Transfer, Book,     Book};
 
   if (hasOpdsServers) {
     menuItems.insert(menuItems.begin() + 1, tr(STR_OPDS_BROWSER));
@@ -339,15 +356,29 @@ void HomeActivity::render(RenderLock&&) {
     menuIcons.insert(menuIcons.begin(), Book);
   }
 
+  // drawButtonMenu draws every row it is given, top-down, with no clipping, so
+  // the window has to be computed here: hand it only the rows that fit and
+  // offset the label/icon lookups by the scroll position.
+  const int menuTop = metrics.homeTopPadding + coverTileHeight + metrics.homeMenuTopOffset;
+  const int rowPitch = metrics.menuRowHeight + metrics.menuSpacing;
+  const int menuBottom = pageHeight - metrics.buttonHintsHeight - metrics.verticalSpacing;
+  const int total = static_cast<int>(menuItems.size());
+  const int visible = std::max(1, std::min(total, (menuBottom - menuTop - metrics.verticalSpacing) / rowPitch));
+
+  const int selected =
+      metrics.homeContinueReadingInMenu ? selectorIndex : selectorIndex - static_cast<int>(recentBooks.size());
+  // Keep the selection inside the window. Clamping both ends also repairs a
+  // scroll left over from a longer list (e.g. an OPDS entry disappearing).
+  if (menuScroll > total - visible) menuScroll = total - visible;
+  if (selected < menuScroll) menuScroll = selected;
+  if (selected >= menuScroll + visible) menuScroll = selected - visible + 1;
+  if (menuScroll < 0) menuScroll = 0;
+
+  const int scroll = menuScroll;
   GUI.drawButtonMenu(
-      renderer,
-      Rect{0, metrics.homeTopPadding + metrics.homeCoverTileHeight + metrics.homeMenuTopOffset, pageWidth,
-           pageHeight - (metrics.headerHeight + metrics.homeTopPadding + metrics.verticalSpacing +
-                         metrics.homeMenuTopOffset + metrics.buttonHintsHeight)},
-      static_cast<int>(menuItems.size()),
-      metrics.homeContinueReadingInMenu ? selectorIndex : selectorIndex - recentBooks.size(),
-      [&menuItems](int index) { return std::string(menuItems[index]); },
-      [&menuIcons](int index) { return menuIcons[index]; });
+      renderer, Rect{0, menuTop, pageWidth, menuBottom - menuTop}, visible, selected - scroll,
+      [&menuItems, scroll](int index) { return std::string(menuItems[index + scroll]); },
+      [&menuIcons, scroll](int index) { return menuIcons[index + scroll]; });
 
   const auto labels = mappedInput.mapLabels(recentBooks.empty() ? "" : tr(STR_RESUME), tr(STR_SELECT), tr(STR_DIR_UP),
                                             tr(STR_DIR_DOWN));
@@ -381,6 +412,8 @@ void HomeActivity::onWorldClockOpen() { activityManager.goToWorldClock(); }
 void HomeActivity::onTimerOpen() { activityManager.goToTimer(); }
 
 void HomeActivity::onWeatherOpen() { activityManager.goToWeather(); }
+
+void HomeActivity::onNewsOpen() { activityManager.goToNews(); }
 
 void HomeActivity::onPetOpen() { activityManager.goToPet(); }
 

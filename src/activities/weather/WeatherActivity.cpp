@@ -15,6 +15,7 @@
 
 #include "CrossPointSettings.h"
 #include "WifiCredentialStore.h"
+#include "activities/util/KeyboardEntryActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "network/HttpDownloader.h"
@@ -89,10 +90,70 @@ void WeatherActivity::loop() {
       WiFi.mode(WIFI_OFF);
     }
     requestUpdate();
+    return;
+  }
+
+  if (mappedInput.wasReleased(MappedInputManager::Button::Left)) {
+    editCity();
   }
 }
 
+void WeatherActivity::editCity() {
+  auto handler = [this](const ActivityResult& result) {
+    if (result.isCancelled) return;
+
+    const auto& kb = std::get<KeyboardResult>(result.data);
+    strncpy(SETTINGS.weatherCity, kb.text.c_str(), sizeof(SETTINGS.weatherCity) - 1);
+    SETTINGS.weatherCity[sizeof(SETTINGS.weatherCity) - 1] = '\0';
+    SETTINGS.saveToFile();
+    LOG_INF("WX", "City set to '%s'", SETTINGS.weatherCity);
+
+    // The cached reading is for the old city, so it is now actively wrong.
+    // Drop it and go straight to the network rather than showing the previous
+    // city's numbers under the new name.
+    Storage.remove(CACHE_PATH);
+    reading = Reading();
+
+    busy = true;
+    statusLine = tr(STR_WEATHER_FETCHING);
+    requestUpdateAndWait();
+    statusLine = fetchNow() ? nullptr : tr(STR_WEATHER_OFFLINE);
+    busy = false;
+    if (WiFi.getMode() != WIFI_MODE_NULL) {
+      WiFi.disconnect(true);
+      WiFi.mode(WIFI_OFF);
+    }
+    requestUpdate();
+  };
+
+  startActivityForResult(std::make_unique<KeyboardEntryActivity>(renderer, mappedInput, tr(STR_WEATHER_CITY),
+                                                                 std::string(SETTINGS.weatherCity),
+                                                                 sizeof(SETTINGS.weatherCity) - 1, InputType::Text),
+                         handler);
+}
+
 // ---------------------------------------------------------------------------
+
+std::string WeatherActivity::encodeQuery(const char* text) {
+  // Cities carry spaces, commas and accents ("Sao Paulo", "Washington, DC").
+  // Anything outside the unreserved set goes out percent-encoded so the query
+  // survives the trip intact.
+  static constexpr char HEX[] = "0123456789ABCDEF";
+  std::string out;
+  if (text == nullptr) return out;
+  for (const char* p = text; *p != '\0'; ++p) {
+    const unsigned char c = static_cast<unsigned char>(*p);
+    if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '_' ||
+        c == '.' || c == '~') {
+      out += static_cast<char>(c);
+    } else {
+      out += '%';
+      out += HEX[c >> 4];
+      out += HEX[c & 0x0F];
+    }
+  }
+  return out;
+}
 
 std::string WeatherActivity::buildUrl() const {
   // Derived from the dashboard URL so there is one host to configure, not two.
@@ -107,6 +168,13 @@ std::string WeatherActivity::buildUrl() const {
   if (slash == std::string::npos) return std::string();
   url.erase(slash + 1);
   url += "x3-weather.json";
+
+  // Empty means "use whatever the dashboard is configured for", so the two
+  // screens agree until the user deliberately splits them.
+  if (SETTINGS.weatherCity[0] != '\0') {
+    url += "?city=";
+    url += encodeQuery(SETTINGS.weatherCity);
+  }
   return url;
 }
 
@@ -135,6 +203,10 @@ bool WeatherActivity::parseInto(const std::string& json, Reading& out) const {
   out.wind = doc["wind"] | 0;
   out.rain = doc["rain"] | 0;
   out.code = doc["code"] | 0;
+  // Null when the server had too little hourly data to score the day; -1 keeps
+  // that distinct from a genuine score of 0 ("stay inside").
+  out.sunny = doc["sunny"].isNull() ? -1 : (doc["sunny"] | -1);
+  copyField(out.sunnyLabel, sizeof(out.sunnyLabel), doc["sunnyLabel"] | "");
   out.isDay = (doc["day"] | 1) != 0;
   out.valid = true;
   return true;
@@ -263,6 +335,10 @@ void WeatherActivity::render(RenderLock&&) {
   renderer.drawCenteredText(NOTOSERIF_18_FONT_ID, 130, big, true, EpdFontFamily::BOLD);
   renderer.drawCenteredText(UI_12_FONT_ID, 172, reading.condition);
 
+  if (reading.sunny >= 0) {
+    drawSunnyBadge(pageWidth - margin - 92, 104, 92);
+  }
+
   char line[48];
   snprintf(line, sizeof(line), "%s %d\xC2\xB0", tr(STR_WEATHER_FEELS), reading.feels);
   renderer.drawCenteredText(UI_10_FONT_ID, 208, line);
@@ -303,7 +379,34 @@ void WeatherActivity::render(RenderLock&&) {
                                                       : tr(STR_WEATHER_UPDATED_NOW);
   renderer.drawCenteredText(SMALL_FONT_ID, pageHeight - 62, footer);
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_DASHBOARD_REFRESH_BTN), "", "");
+  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_DASHBOARD_REFRESH_BTN), tr(STR_WEATHER_CITY), "");
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   renderer.displayBuffer(HalDisplay::HALF_REFRESH);
+}
+
+void WeatherActivity::drawSunnyBadge(const int x, const int y, const int size) const {
+  // The SunnyDay score as a filled proportion of a box, plus the number. A ring
+  // would match the website, but the renderer has no arc primitive and a
+  // stepped circle at this size reads as a blob on 1-bit e-ink.
+  renderer.drawRect(x, y, size, size, 2, true);
+
+  const int inset = 4;
+  const int inner = size - inset * 2;
+  const int filled = inner * std::max(0, std::min(100, reading.sunny)) / 100;
+  // Fill from the bottom, like a gauge.
+  renderer.fillRect(x + inset, y + inset + (inner - filled), inner, filled, true);
+
+  char value[8];
+  snprintf(value, sizeof(value), "%d", reading.sunny);
+  const int vw = renderer.getTextWidth(UI_12_FONT_ID, value, EpdFontFamily::BOLD);
+  const int vy = y + size / 2 - renderer.getLineHeight(UI_12_FONT_ID) / 2;
+  // The numeral sits over the gauge, so its colour has to follow whichever part
+  // of the box it lands in. Above the fill line it is black on white.
+  const bool overFill = (size / 2) > (inset + inner - filled);
+  renderer.drawText(UI_12_FONT_ID, x + size / 2 - vw / 2, vy, value, !overFill, EpdFontFamily::BOLD);
+
+  if (reading.sunnyLabel[0] != '\0') {
+    const int lw = renderer.getTextWidth(SMALL_FONT_ID, reading.sunnyLabel);
+    renderer.drawText(SMALL_FONT_ID, x + size / 2 - lw / 2, y + size + 6, reading.sunnyLabel, true);
+  }
 }

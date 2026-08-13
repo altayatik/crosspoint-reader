@@ -10,8 +10,10 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstring>
 #include <string>
 
+#include "activities/util/KeyboardEntryActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 
@@ -64,6 +66,7 @@ void PetActivity::onEnter() {
 
   if (haveClock) {
     const uint32_t today = ordinalDay(now.year, now.month, now.day);
+    todayOrdinal = today;
     if (!existed || state.lastDay == 0) {
       // First meeting. Start it fresh rather than applying decades of decay
       // against a zeroed lastDay.
@@ -123,6 +126,10 @@ bool PetActivity::load() {
   state.energy = static_cast<uint8_t>(clamp8(doc["energy"] | 80));
   state.ageDays = doc["age"] | 0;
   state.lastDay = doc["day"] | 0;
+  state.lastRestDay = doc["rest"] | 0;
+  const char* saved = doc["name"] | "";
+  strncpy(state.name, saved, sizeof(state.name) - 1);
+  state.name[sizeof(state.name) - 1] = '\0';
   return true;
 }
 
@@ -133,6 +140,8 @@ bool PetActivity::save() const {
   doc["energy"] = state.energy;
   doc["age"] = state.ageDays;
   doc["day"] = state.lastDay;
+  doc["rest"] = state.lastRestDay;
+  doc["name"] = state.name;
 
   std::string json;
   serializeJson(doc, json);
@@ -171,6 +180,61 @@ const char* PetActivity::moodLabel() const {
   }
 }
 
+PetActivity::Stage PetActivity::stage() const {
+  if (state.ageDays < 2) return Stage::Hatchling;
+  if (state.ageDays < 7) return Stage::Pup;
+  if (state.ageDays < 21) return Stage::Junior;
+  if (state.ageDays < 60) return Stage::Grown;
+  return Stage::Elder;
+}
+
+const char* PetActivity::stageLabel() const {
+  switch (stage()) {
+    case Stage::Hatchling:
+      return tr(STR_PET_STAGE_HATCHLING);
+    case Stage::Pup:
+      return tr(STR_PET_STAGE_PUP);
+    case Stage::Junior:
+      return tr(STR_PET_STAGE_JUNIOR);
+    case Stage::Grown:
+      return tr(STR_PET_STAGE_GROWN);
+    case Stage::Elder:
+    default:
+      return tr(STR_PET_STAGE_ELDER);
+  }
+}
+
+const char* PetActivity::displayName() const { return state.name[0] != '\0' ? state.name : stageLabel(); }
+
+void PetActivity::rename() {
+  auto handler = [this](const ActivityResult& result) {
+    if (result.isCancelled) return;
+    const auto& kb = std::get<KeyboardResult>(result.data);
+    strncpy(state.name, kb.text.c_str(), sizeof(state.name) - 1);
+    state.name[sizeof(state.name) - 1] = '\0';
+    save();
+    requestUpdate();
+  };
+  startActivityForResult(std::make_unique<KeyboardEntryActivity>(renderer, mappedInput, tr(STR_PET_NAME),
+                                                                 std::string(state.name), sizeof(state.name) - 1,
+                                                                 InputType::Text),
+                         handler);
+}
+
+void PetActivity::rest() {
+  // Once per calendar day. Without the guard this is just an energy button, and
+  // energy is the only thing that gates playing.
+  if (haveClock && todayOrdinal != 0 && state.lastRestDay == todayOrdinal) {
+    toast = tr(STR_PET_ALREADY_RESTED);
+    return;
+  }
+  state.energy = static_cast<uint8_t>(clamp8(state.energy + 40));
+  state.hunger = static_cast<uint8_t>(clamp8(state.hunger + 10));
+  state.lastRestDay = todayOrdinal;
+  toast = tr(STR_PET_RESTED);
+  save();
+}
+
 void PetActivity::feed() {
   state.hunger = static_cast<uint8_t>(clamp8(state.hunger - FEED_AMOUNT));
   state.energy = static_cast<uint8_t>(clamp8(state.energy + 8));
@@ -202,10 +266,18 @@ void PetActivity::loop() {
     requestUpdate();
     return;
   }
-  if (mappedInput.wasReleased(MappedInputManager::Button::Right) ||
-      mappedInput.wasReleased(MappedInputManager::Button::Down)) {
+  if (mappedInput.wasReleased(MappedInputManager::Button::Right)) {
     play();
     requestUpdate();
+    return;
+  }
+  if (mappedInput.wasReleased(MappedInputManager::Button::Left)) {
+    rest();
+    requestUpdate();
+    return;
+  }
+  if (mappedInput.wasReleased(MappedInputManager::Button::Up)) {
+    rename();
   }
 }
 
@@ -223,9 +295,18 @@ void PetActivity::drawPet(const int cx, const int cy, const int size) const {
   // circle routine and indistinguishable at this scale.
   renderer.fillRect(cx - r + size / 8, cy - r, size - size / 4, size / 6, true);
 
-  // Ears
-  renderer.fillRect(cx - r + size / 8, cy - r - size / 8, size / 6, size / 8, true);
-  renderer.fillRect(cx + r - size / 8 - size / 6, cy - r - size / 8, size / 6, size / 8, true);
+  // Ears. They lengthen as the pet grows, which is the cheapest silhouette cue
+  // available -- the outline changes even at a glance from across the room.
+  static constexpr int EAR_SCALE[5] = {4, 6, 8, 10, 9};
+  const int earH = size * EAR_SCALE[static_cast<int>(stage())] / 80;
+  renderer.fillRect(cx - r + size / 8, cy - r - earH, size / 6, earH, true);
+  renderer.fillRect(cx + r - size / 8 - size / 6, cy - r - earH, size / 6, earH, true);
+
+  if (stage() == Stage::Elder) {
+    // Whiskers: two knocked-out bars on the cheeks.
+    renderer.fillRect(cx - r + size / 12, cy + size / 8, size / 5, 3, false);
+    renderer.fillRect(cx + r - size / 12 - size / 5, cy + size / 8, size / 5, 3, false);
+  }
 
   const int eyeY = cy - size / 10;
   const int eyeDx = size / 5;
@@ -271,10 +352,21 @@ void PetActivity::drawPet(const int cx, const int cy, const int size) const {
 }
 
 void PetActivity::drawStat(const int x, const int y, const int w, const char* label, const int value) const {
-  renderer.drawText(SMALL_FONT_ID, x, y, label);
+  // The bar used to start 6px below the top of the label, i.e. straight through
+  // it. It goes below the full line box now, and the label gets the UI face
+  // rather than the small one so it is legible at arm's length.
+  const int lineHeight = renderer.getLineHeight(UI_10_FONT_ID);
+  renderer.drawText(UI_10_FONT_ID, x, y, label, true, EpdFontFamily::BOLD);
 
-  const int barY = y + 6;
-  const int barH = 12;
+  // Percentage on the right of the same line. A bare bar makes "nearly full"
+  // and "full" indistinguishable, which matters when a stat gates an action.
+  char percent[8];
+  snprintf(percent, sizeof(percent), "%d%%", clamp8(value));
+  const int pw = renderer.getTextWidth(UI_10_FONT_ID, percent);
+  renderer.drawText(UI_10_FONT_ID, x + w - pw, y, percent, true);
+
+  const int barY = y + lineHeight + 4;
+  const int barH = 16;
   renderer.drawRect(x, barY, w, barH, 1, true);
   const int fill = (w - 4) * clamp8(value) / 100;
   if (fill > 0) renderer.fillRect(x + 2, barY + 2, fill, barH - 4, true);
@@ -286,31 +378,37 @@ void PetActivity::render(RenderLock&&) {
   const int margin = 24;
 
   renderer.clearScreen();
-  renderer.drawCenteredText(UI_12_FONT_ID, 46, tr(STR_PET_MENU), true, EpdFontFamily::BOLD);
+  renderer.drawCenteredText(UI_12_FONT_ID, 40, displayName(), true, EpdFontFamily::BOLD);
 
-  const int petSize = std::min(pageWidth - margin * 4, 200);
-  drawPet(pageWidth / 2, 200, petSize);
+  char subtitle[48];
+  snprintf(subtitle, sizeof(subtitle), "%s  -  %s %u", stageLabel(), tr(STR_PET_AGE),
+           static_cast<unsigned>(state.ageDays));
+  renderer.drawCenteredText(SMALL_FONT_ID, 70, subtitle);
+
+  // The pet grows with its stage, from a small hatchling to a full-size adult.
+  const int maxSize = std::min(pageWidth - margin * 4, 210);
+  static constexpr int STAGE_SCALE[5] = {55, 70, 85, 100, 95};
+  const int petSize = maxSize * STAGE_SCALE[static_cast<int>(stage())] / 100;
+  drawPet(pageWidth / 2, 210, petSize);
 
   renderer.drawCenteredText(UI_12_FONT_ID, 330, moodLabel(), true, EpdFontFamily::BOLD);
 
-  char age[32];
-  snprintf(age, sizeof(age), "%s %u", tr(STR_PET_AGE), static_cast<unsigned>(state.ageDays));
-  renderer.drawCenteredText(SMALL_FONT_ID, 358, age);
-
   const int statW = pageWidth - margin * 2;
   // Hunger is inverted for display: a full bar should always mean "good".
-  drawStat(margin, 400, statW, tr(STR_PET_FULLNESS), 100 - state.hunger);
-  drawStat(margin, 446, statW, tr(STR_PET_HAPPINESS), state.happiness);
-  drawStat(margin, 492, statW, tr(STR_PET_ENERGY), state.energy);
+  drawStat(margin, 382, statW, tr(STR_PET_FULLNESS), 100 - state.hunger);
+  drawStat(margin, 440, statW, tr(STR_PET_HAPPINESS), state.happiness);
+  drawStat(margin, 498, statW, tr(STR_PET_ENERGY), state.energy);
 
+  if (toast) {
+    renderer.drawCenteredText(UI_10_FONT_ID, pageHeight - 118, toast, true, EpdFontFamily::BOLD);
+  }
   if (!haveClock) {
     renderer.drawCenteredText(SMALL_FONT_ID, pageHeight - 92, tr(STR_PET_NO_CLOCK));
-  } else if (toast) {
-    renderer.drawCenteredText(SMALL_FONT_ID, pageHeight - 92, toast);
   }
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_PET_FEED), "", tr(STR_PET_PLAY));
+  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_PET_FEED), tr(STR_PET_REST), tr(STR_PET_PLAY));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  GUI.drawSideButtonHints(renderer, tr(STR_PET_NAME), "");
 
   renderer.displayBuffer(HalDisplay::HALF_REFRESH);
 }

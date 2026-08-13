@@ -47,6 +47,10 @@ class WeatherActivity final : public Activity {
     int wind = 0;
     int rain = 0;
     int code = 0;
+    // SunnyDay score, 0-100, or -1 when the server could not compute one. The
+    // same figure altayatik.com/sunnyday shows; see lib/x3/sunnyday.js.
+    int sunny = -1;
+    char sunnyLabel[20] = "";
     bool isDay = true;
     // millis() at the moment of the fetch. Deliberately not wall-clock: the RTC
     // may be unset, and all this needs to answer is "how long ago".
@@ -59,6 +63,14 @@ class WeatherActivity final : public Activity {
   bool fetchNow();
   bool parseInto(const std::string& json, Reading& out) const;
   std::string buildUrl() const;
+
+  /** Open the on-screen keyboard to change the city, then re-fetch. */
+  void editCity();
+
+  /** Percent-encode a city name for the query string. */
+  static std::string encodeQuery(const char* text);
+
+  void drawSunnyBadge(int x, int y, int size) const;
 
   Reading reading;
   bool busy = false;

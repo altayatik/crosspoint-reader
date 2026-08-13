@@ -33,6 +33,10 @@ class PetActivity final : public Activity {
  private:
   enum class Mood : uint8_t { Happy, Content, Sad, Hungry, Asleep };
 
+  // Growth stages, by age in days. The pet visibly changes as it gets older,
+  // which is the only long-term reward a device this quiet can offer.
+  enum class Stage : uint8_t { Hatchling, Pup, Junior, Grown, Elder };
+
   struct State {
     // 0..100. Hunger counts *up* toward starving; the other two count down.
     uint8_t hunger = 20;
@@ -42,6 +46,10 @@ class PetActivity final : public Activity {
     // Last visit, as a plain ordinal day number so day arithmetic is trivial
     // and survives month and year boundaries.
     uint32_t lastDay = 0;
+    // Ordinal day of the last nap. Resting is once per day, so it cannot be
+    // spammed into an infinite energy supply.
+    uint32_t lastRestDay = 0;
+    char name[16] = "";
   };
 
   bool load();
@@ -57,13 +65,21 @@ class PetActivity final : public Activity {
   Mood mood() const;
   const char* moodLabel() const;
 
+  Stage stage() const;
+  const char* stageLabel() const;
+  /** Display name, falling back to the stage name until one is set. */
+  const char* displayName() const;
+
   void feed();
   void play();
+  void rest();
+  void rename();
 
   void drawPet(int cx, int cy, int size) const;
   void drawStat(int x, int y, int w, const char* label, int value) const;
 
   State state;
   bool haveClock = false;
+  uint32_t todayOrdinal = 0;
   const char* toast = nullptr;
 };

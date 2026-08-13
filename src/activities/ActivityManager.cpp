@@ -21,6 +21,7 @@
 #include "settings/SettingsActivity.h"
 #include "calendar/CalendarActivity.h"
 #include "dashboard/DashboardActivity.h"
+#include "news/NewsActivity.h"
 #include "pet/PetActivity.h"
 #include "timer/TimerActivity.h"
 #include "weather/WeatherActivity.h"
@@ -215,6 +216,8 @@ void ActivityManager::goToWorldClock() { replaceActivity(std::make_unique<WorldC
 void ActivityManager::goToTimer() { replaceActivity(std::make_unique<TimerActivity>(renderer, mappedInput)); }
 
 void ActivityManager::goToWeather() { replaceActivity(std::make_unique<WeatherActivity>(renderer, mappedInput)); }
+
+void ActivityManager::goToNews() { replaceActivity(std::make_unique<NewsActivity>(renderer, mappedInput)); }
 
 void ActivityManager::goToPet() { replaceActivity(std::make_unique<PetActivity>(renderer, mappedInput)); }
 
