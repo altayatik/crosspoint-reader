@@ -354,13 +354,32 @@ DashboardActivity::Outcome DashboardActivity::commitDownload() {
 }
 
 bool DashboardActivity::displayImage() {
-  // The actual drawing happens in render(), on the render task, under the
-  // render lock. Block here until it has finished so refresh() can report the
-  // outcome truthfully.
+  // Validate here, on the calling task, rather than having render() report back
+  // through a member. Passing the result across tasks would mean refresh()'s
+  // outcome depended on a write cppcheck cannot see, and it flagged the
+  // resulting condition as always false -- correctly, from what it could tell.
+  //
+  // The re-parse costs one header read of a file commitDownload() has already
+  // validated, which is cheap next to the e-ink refresh that follows.
+  {
+    HalFile file;
+    if (!Storage.openFileForRead("DSH", LIVE_PATH, file)) {
+      LOG_ERR("DSH", "Image missing at display time");
+      return false;
+    }
+    Bitmap probe(file);
+    if (probe.parseHeaders() != BmpReaderError::Ok) {
+      LOG_ERR("DSH", "Image no longer parses");
+      return false;
+    }
+  }
+
+  // The drawing itself happens in render(), on the render task, under the
+  // render lock. Block until it has finished so the caller can shut the radio
+  // down and sleep knowing the panel has been written.
   phase = Phase::Image;
-  imagePainted = false;
   requestUpdateAndWait();
-  return imagePainted;
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -452,7 +471,6 @@ void DashboardActivity::render(RenderLock&&) {
   // unattended updates; FULL runs the multi-flash GC waveform and blinks. See
   // SleepActivity::renderBitmapSleepScreen for the same reasoning.
   renderer.displayBuffer(HalDisplay::HALF_REFRESH);
-  imagePainted = true;
 }
 
 const char* DashboardActivity::outcomeName(const Outcome outcome) {

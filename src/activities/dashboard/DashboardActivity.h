@@ -91,8 +91,6 @@ class DashboardActivity final : public Activity {
 
   Phase phase = Phase::Banner;
   const char* message = nullptr;
-  // Set by render() so displayImage() can report whether the bitmap parsed.
-  bool imagePainted = false;
 
   bool autoSleep = true;
   bool busy = false;

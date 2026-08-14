@@ -138,7 +138,9 @@ std::string WeatherActivity::encodeQuery(const char* text) {
   // Cities carry spaces, commas and accents ("Sao Paulo", "Washington, DC").
   // Anything outside the unreserved set goes out percent-encoded so the query
   // survives the trip intact.
-  static constexpr char HEX[] = "0123456789ABCDEF";
+  // Not named HEX: Arduino's Print.h defines that as the integer 16, and the
+  // macro wins over any local declaration.
+  static constexpr char HEX_DIGITS[] = "0123456789ABCDEF";
   std::string out;
   if (text == nullptr) return out;
   for (const char* p = text; *p != '\0'; ++p) {
@@ -148,8 +150,8 @@ std::string WeatherActivity::encodeQuery(const char* text) {
       out += static_cast<char>(c);
     } else {
       out += '%';
-      out += HEX[c >> 4];
-      out += HEX[c & 0x0F];
+      out += HEX_DIGITS[c >> 4];
+      out += HEX_DIGITS[c & 0x0F];
     }
   }
   return out;
