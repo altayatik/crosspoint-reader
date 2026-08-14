@@ -40,25 +40,29 @@ int WorldClockActivity::utcMinutesNow() const {
     return -1;
   }
 
-  // The RTC holds local time. clockUtcOffsetQ is biased quarter-hours
-  // (48 = UTC+0), the same convention the status-bar clock uses.
-  uint8_t biased = SETTINGS.clockUtcOffsetQ;
-  if (biased > 104) biased = 48;
-  const int localOffsetMinutes = (static_cast<int>(biased) - 48) * 15;
-  // Remembered so render() can work out which zones are on a different calendar
-  // day from the one the user is standing in.
-  homeOffsetMinutes = localOffsetMinutes;
-
-  int minutes = static_cast<int>(hour) * 60 + static_cast<int>(minute) - localOffsetMinutes;
+  // The RTC holds the user's own local time. Anchor everything to that and to
+  // ZONES[0] as the home city, rather than to SETTINGS.clockUtcOffsetQ.
+  //
+  // That setting defaults to UTC+0 and there is no reason for anyone to have
+  // touched it -- the status-bar clock works without it. Trusting it meant the
+  // home city itself was reported a day behind, which is how Chicago ended up
+  // marked -1 while sitting in Chicago.
+  const int localMinutes = static_cast<int>(hour) * 60 + static_cast<int>(minute);
+  const int minutes = localMinutes - ZONES[0].offsetMinutes;
   return ((minutes % 1440) + 1440) % 1440;
 }
 
 int WorldClockActivity::dayOffsetFor(const int zoneOffsetMinutes) const {
-  // floorDiv, not integer division: a zone that is behind UTC midnight gives a
+  // Home local time is 0..1439 by construction, so its own day index is 0 and
+  // the comparison reduces to which day the other zone has rolled into.
+  const int homeLocal = ((utcMinutes + ZONES[0].offsetMinutes) % 1440 + 1440) % 1440;
+  const int zoneLocal = homeLocal + (zoneOffsetMinutes - ZONES[0].offsetMinutes);
+
+  // floorDiv, not integer division: a zone behind home across midnight gives a
   // negative numerator, and C++ truncation toward zero would report 0 instead
   // of -1 for the whole of the previous day.
-  const auto floorDiv = [](const int value) { return value >= 0 ? value / 1440 : -(((-value) + 1439) / 1440); };
-  return floorDiv(utcMinutes + zoneOffsetMinutes) - floorDiv(utcMinutes + homeOffsetMinutes);
+  if (zoneLocal < 0) return -(((-zoneLocal) + 1439) / 1440);
+  return zoneLocal / 1440;
 }
 
 void WorldClockActivity::loop() {
@@ -105,7 +109,7 @@ void WorldClockActivity::render(RenderLock&&) {
   }
 
   const int listTop = 84;
-  const int rowH = (pageHeight - listTop - 74) / ZONE_COUNT;
+  const int rowH = (pageHeight - listTop - 56) / ZONE_COUNT;
 
   for (int i = 0; i < ZONE_COUNT; ++i) {
     const Zone& zone = ZONES[i];
@@ -141,8 +145,6 @@ void WorldClockActivity::render(RenderLock&&) {
       renderer.drawLine(margin, listTop + rowH * (i + 1), pageWidth - margin, listTop + rowH * (i + 1), 1, true);
     }
   }
-
-  renderer.drawCenteredText(SMALL_FONT_ID, pageHeight - 62, tr(STR_WORLDCLOCK_DST_NOTE));
 
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_DASHBOARD_REFRESH_BTN), "", "");
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);

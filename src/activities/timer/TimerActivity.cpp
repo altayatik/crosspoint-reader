@@ -28,7 +28,7 @@ void formatDuration(char* out, const size_t size, const int seconds) {
 
 }  // namespace
 
-const uint16_t TimerActivity::PRESET_SECONDS[] = {60, 300, 1500, 3000, 600, 900};
+const uint16_t TimerActivity::PRESET_SECONDS[] = {30, 60, 300, 600, 1800, 3600};
 const int TimerActivity::PRESET_COUNT = sizeof(PRESET_SECONDS) / sizeof(PRESET_SECONDS[0]);
 
 TimerActivity::TimerActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
@@ -40,15 +40,17 @@ void TimerActivity::onEnter() {
 }
 
 int TimerActivity::repaintIntervalFor(const int remaining) {
-  if (remaining <= 10) return 1;
-  if (remaining <= 60) return 5;
-  if (remaining <= 600) return 30;
-  if (remaining <= 3600) return 60;
-  return 300;
+  if (remaining <= 60) return 1;      // under a minute: every second
+  if (remaining <= 300) return 5;     // 1-5 min
+  if (remaining <= 1800) return 30;   // 5-30 min
+  if (remaining <= 3600) return 60;   // 30-60 min
+  return 300;                         // over an hour
 }
 
+bool TimerActivity::isCustom() const { return presetIndex >= PRESET_COUNT; }
+
 int TimerActivity::selectedSeconds() const {
-  return picker == Picker::Custom ? customSeconds : static_cast<int>(PRESET_SECONDS[presetIndex]);
+  return isCustom() ? customSeconds : static_cast<int>(PRESET_SECONDS[presetIndex]);
 }
 
 int TimerActivity::remainingSeconds() const {
@@ -109,10 +111,10 @@ void TimerActivity::loop() {
     if (state != State::Idle) {
       reset();
       requestUpdate();
-    } else if (picker == Picker::Custom) {
-      // Back steps out of the custom editor before it leaves the app, so an
-      // accidental Custom is one press to undo.
-      picker = Picker::Preset;
+    } else if (editing) {
+      // Back leaves the editor before it leaves the app, so an accidental
+      // Custom is one press to undo.
+      editing = false;
       requestUpdate();
     } else {
       activityManager.goHome();
@@ -123,7 +125,12 @@ void TimerActivity::loop() {
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
     switch (state) {
       case State::Idle:
-        start();
+        if (isCustom() && !editing) {
+          // First Confirm on Custom opens the editor; the second starts it.
+          editing = true;
+        } else {
+          start();
+        }
         break;
       case State::Running:
         pausedRemaining = remainingSeconds();
@@ -142,41 +149,38 @@ void TimerActivity::loop() {
 
   // Duration selection, only while stopped.
   if (state == State::Idle) {
+    // Custom is the entry after the last preset, so the cycle is one longer.
+    const int options = PRESET_COUNT + 1;
+
     if (mappedInput.wasReleased(MappedInputManager::Button::Left)) {
-      if (picker == Picker::Custom) {
+      if (editing) {
         adjustCustom(-1);
       } else {
-        presetIndex = (presetIndex + PRESET_COUNT - 1) % PRESET_COUNT;
+        presetIndex = (presetIndex + options - 1) % options;
       }
       requestUpdate();
       return;
     }
     if (mappedInput.wasReleased(MappedInputManager::Button::Right)) {
-      if (picker == Picker::Custom) {
+      if (editing) {
         adjustCustom(1);
       } else {
-        presetIndex = (presetIndex + 1) % PRESET_COUNT;
+        presetIndex = (presetIndex + 1) % options;
       }
       requestUpdate();
       return;
     }
-    if (mappedInput.wasReleased(MappedInputManager::Button::Up)) {
-      if (picker == Picker::Preset) {
-        // Enter the editor pre-loaded with the highlighted preset, so "25
-        // minutes but 30 seconds longer" does not start from scratch.
-        customSeconds = PRESET_SECONDS[presetIndex];
-        picker = Picker::Custom;
-        field = Field::Minutes;
-      } else {
+    if (editing) {
+      if (mappedInput.wasReleased(MappedInputManager::Button::Up)) {
         field = field == Field::Hours ? Field::Seconds : static_cast<Field>(static_cast<uint8_t>(field) - 1);
+        requestUpdate();
+        return;
       }
-      requestUpdate();
-      return;
-    }
-    if (mappedInput.wasReleased(MappedInputManager::Button::Down) && picker == Picker::Custom) {
-      field = field == Field::Seconds ? Field::Hours : static_cast<Field>(static_cast<uint8_t>(field) + 1);
-      requestUpdate();
-      return;
+      if (mappedInput.wasReleased(MappedInputManager::Button::Down)) {
+        field = field == Field::Seconds ? Field::Hours : static_cast<Field>(static_cast<uint8_t>(field) + 1);
+        requestUpdate();
+        return;
+      }
     }
   }
 
@@ -257,7 +261,7 @@ void TimerActivity::render(RenderLock&&) {
   // The big numeral. NotoSerif 18 is the largest face the firmware carries;
   // there is no 100px font here the way there is on the server-rendered
   // dashboard, so this is as large as the countdown can honestly get.
-  const int clockY = state == State::Idle && picker == Picker::Custom ? pageHeight / 2 - 90 : pageHeight / 2;
+  const int clockY = editing ? pageHeight / 2 - 90 : pageHeight / 2;
   renderer.drawCenteredText(NOTOSERIF_18_FONT_ID, clockY, clock, true, EpdFontFamily::BOLD);
 
   const char* status = state == State::Running  ? tr(STR_TIMER_RUNNING)
@@ -265,10 +269,12 @@ void TimerActivity::render(RenderLock&&) {
                                                 : tr(STR_TIMER_READY);
   renderer.drawCenteredText(UI_10_FONT_ID, clockY + 44, status);
 
-  if (state == State::Idle && picker == Picker::Custom) {
+  if (state == State::Idle && editing) {
     drawCustomFields(pageWidth, clockY + 84);
   } else if (state == State::Idle) {
-    renderer.drawCenteredText(SMALL_FONT_ID, pageHeight - 66, tr(STR_TIMER_PICK));
+    // Name the selection so Custom is visibly one of the options rather than a
+    // mode you have to already know about.
+    renderer.drawCenteredText(UI_10_FONT_ID, clockY + 78, isCustom() ? tr(STR_TIMER_CUSTOM) : tr(STR_TIMER_PICK));
   } else if (state == State::Running && remaining > 10) {
     // Set expectations: a static-looking screen is otherwise indistinguishable
     // from a crashed one. Say how often it will actually move.
@@ -282,18 +288,17 @@ void TimerActivity::render(RenderLock&&) {
     renderer.drawCenteredText(SMALL_FONT_ID, pageHeight - 66, note);
   }
 
-  const char* confirm = state == State::Running ? tr(STR_TIMER_PAUSE) : tr(STR_TIMER_START);
+  const char* confirm = state == State::Running                  ? tr(STR_TIMER_PAUSE)
+                        : (state == State::Idle && isCustom() && !editing) ? tr(STR_TIMER_SET)
+                                                                   : tr(STR_TIMER_START);
   const bool adjustable = state == State::Idle;
-  const auto labels =
-      mappedInput.mapLabels(tr(STR_BACK), confirm, adjustable ? "-" : "", adjustable ? "+" : "");
+  const auto labels = mappedInput.mapLabels(tr(STR_BACK), confirm, adjustable ? "-" : "", adjustable ? "+" : "");
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
-  if (state == State::Idle) {
-    if (picker == Picker::Custom) {
-      GUI.drawSideButtonHints(renderer, tr(STR_TIMER_FIELD), tr(STR_TIMER_FIELD));
-    } else {
-      GUI.drawSideButtonHints(renderer, tr(STR_TIMER_CUSTOM), "");
-    }
+  // A note rather than side-button hints: those are drawn rotated down the
+  // screen edges at a fixed height and cut across the content.
+  if (state == State::Idle && editing) {
+    renderer.drawCenteredText(SMALL_FONT_ID, pageHeight - 88, tr(STR_TIMER_FIELD_HINT));
   }
 
   // FAST for the ticking countdown -- the only thing changing is a couple of

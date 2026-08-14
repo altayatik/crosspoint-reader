@@ -49,6 +49,9 @@ class PetActivity final : public Activity {
     // Ordinal day of the last nap. Resting is once per day, so it cannot be
     // spammed into an infinite energy supply.
     uint32_t lastRestDay = 0;
+    // Consecutive calendar days with a visit. The only thing here that rewards
+    // coming back, so it survives in the save file rather than being derived.
+    uint16_t streak = 0;
     char name[16] = "";
   };
 
@@ -67,6 +70,8 @@ class PetActivity final : public Activity {
 
   Stage stage() const;
   const char* stageLabel() const;
+  /** Whichever stat is worst right now, phrased as something to do about it. */
+  const char* needsLabel() const;
   /** Display name, falling back to the stage name until one is set. */
   const char* displayName() const;
 

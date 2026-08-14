@@ -38,6 +38,9 @@ class NewsActivity final : public Activity {
   struct Item {
     std::string title;
     std::string source;
+    // The feed's own standfirst, already trimmed to 300 chars server-side.
+    // Empty when the feed gave none, or when it just repeated the headline.
+    std::string summary;
   };
 
   bool loadCache();
@@ -51,10 +54,14 @@ class NewsActivity final : public Activity {
   /** Split a headline across at most `maxLines` lines of `width` pixels. */
   int wrapTitle(const std::string& title, int width, int maxLines, std::string* lines) const;
 
-  static constexpr int MAX_ITEMS = 14;
-  // Bounds the parse. The endpoint caps its own list at 14 short strings, so
-  // this is a hard ceiling rather than a guess that grows with the feed.
-  static constexpr size_t JSON_CAPACITY = 4096;
+  /** Same wrap, but for the body font used on the detail screen. */
+  int wrapText(const std::string& text, int fontId, int width, int maxLines, std::string* lines) const;
+
+  static constexpr int MAX_ITEMS = 12;
+  // Bounds the parse. The endpoint caps itself at 12 x (110 char title + 300
+  // char summary), so this is a hard ceiling rather than a guess that grows
+  // with the feed.
+  static constexpr size_t JSON_CAPACITY = 8192;
   static constexpr int TITLE_LINES = 3;
 
   std::vector<Item> items;

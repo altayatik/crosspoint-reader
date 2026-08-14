@@ -182,6 +182,20 @@ DashboardActivity::Outcome DashboardActivity::refresh() {
   if (!download(url)) return Outcome::FetchFailed;
 
   const Outcome committed = commitDownload();
+  if (committed == Outcome::Unchanged) {
+    // Identical bytes do not mean the panel is already showing them.
+    //
+    // Skipping the paint here is only safe on an unattended timer wake: deep
+    // sleep is a full reset, but e-ink holds its last image with no power and
+    // showBanner() draws nothing in that mode, so the dashboard really is still
+    // on the glass and repainting it would waste a refresh.
+    //
+    // Every other route has drawn over it -- the Home menu we launched from, or
+    // the progress banner -- so the image has to go back on. Returning early
+    // here is what left "Fetching dashboard" on screen for good.
+    if (autoSleep) return Outcome::Unchanged;
+    return displayImage() ? Outcome::Unchanged : Outcome::BadImage;
+  }
   if (committed != Outcome::Displayed) return committed;
 
   return displayImage() ? Outcome::Displayed : Outcome::BadImage;

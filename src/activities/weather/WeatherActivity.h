@@ -46,6 +46,7 @@ class WeatherActivity final : public Activity {
     int humidity = 0;
     int wind = 0;
     int rain = 0;
+    int pressure = 0;
     int code = 0;
     // SunnyDay score, 0-100, or -1 when the server could not compute one. The
     // same figure altayatik.com/sunnyday shows; see lib/x3/sunnyday.js.
@@ -70,7 +71,14 @@ class WeatherActivity final : public Activity {
   /** Percent-encode a city name for the query string. */
   static std::string encodeQuery(const char* text);
 
-  void drawSunnyBadge(int x, int y, int size) const;
+  /** Rounded panel used for every block on the screen. */
+  void drawCard(int x, int y, int w, int h) const;
+  void drawNowCard(int x, int y, int w, int h) const;
+  void drawSunnyCard(int x, int y, int w, int h) const;
+  void drawDetailCard(int x, int y, int w, int h) const;
+  void drawSunCard(int x, int y, int w, int h) const;
+  /** One label/value pair, label above value, both left-aligned at x. */
+  void drawStat(int x, int y, const char* label, const char* value) const;
 
   Reading reading;
   bool busy = false;

@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <string>
 
 #include "CrossPointSettings.h"
 #include "WifiCredentialStore.h"
@@ -204,6 +205,7 @@ bool WeatherActivity::parseInto(const std::string& json, Reading& out) const {
   out.humidity = doc["humidity"] | 0;
   out.wind = doc["wind"] | 0;
   out.rain = doc["rain"] | 0;
+  out.pressure = doc["pressure"] | 0;
   out.code = doc["code"] | 0;
   // Null when the server had too little hourly data to score the day; -1 keeps
   // that distinct from a genuine score of 0 ("stay inside").
@@ -314,101 +316,184 @@ bool WeatherActivity::fetchNow() {
 
 // ---------------------------------------------------------------------------
 
+void WeatherActivity::drawCard(const int x, const int y, const int w, const int h) const {
+  renderer.drawRoundedRect(x, y, w, h, 2, 10, true);
+}
+
+void WeatherActivity::drawStat(const int x, const int y, const char* label, const char* value) const {
+  renderer.drawText(SMALL_FONT_ID, x, y, label, true);
+  renderer.drawText(UI_12_FONT_ID, x, y + renderer.getLineHeight(SMALL_FONT_ID) + 4, value, true,
+                    EpdFontFamily::BOLD);
+}
+
+void WeatherActivity::drawNowCard(const int x, const int y, const int w, const int h) const {
+  drawCard(x, y, w, h);
+
+  // Temperature owns the left half; everything else stacks down the right. The
+  // previous layout centred the numeral across the full width and then dropped
+  // a score badge on top of it, which is where the overlap came from.
+  char big[12];
+  snprintf(big, sizeof(big), "%d\xC2\xB0", reading.temp);
+  const int bigW = renderer.getTextWidth(NOTOSERIF_18_FONT_ID, big, EpdFontFamily::BOLD);
+  const int bigH = renderer.getLineHeight(NOTOSERIF_18_FONT_ID);
+  const int leftW = w * 44 / 100;
+  renderer.drawText(NOTOSERIF_18_FONT_ID, x + (leftW - bigW) / 2, y + (h - bigH) / 2 - 6, big, true,
+                    EpdFontFamily::BOLD);
+
+  const int rightX = x + leftW;
+  renderer.drawLine(rightX, y + 18, rightX, y + h - 18, 1, true);
+
+  const int textX = rightX + 18;
+  const int avail = w - leftW - 34;
+  int ty = y + 26;
+
+  // Conditions can be long ("Thunderstorm with slight hail"); two lines at the
+  // smaller size beats one clipped line.
+  const int condLine = renderer.getLineHeight(UI_10_FONT_ID);
+  if (renderer.getTextWidth(UI_10_FONT_ID, reading.condition, EpdFontFamily::BOLD) <= avail) {
+    renderer.drawText(UI_10_FONT_ID, textX, ty, reading.condition, true, EpdFontFamily::BOLD);
+    ty += condLine + 14;
+  } else {
+    // Break at the last space that still fits.
+    std::string cond(reading.condition);
+    size_t cut = cond.size();
+    while (cut != std::string::npos) {
+      cut = cond.rfind(' ', cut - 1);
+      if (cut == std::string::npos) break;
+      if (renderer.getTextWidth(UI_10_FONT_ID, cond.substr(0, cut).c_str(), EpdFontFamily::BOLD) <= avail) break;
+    }
+    if (cut == std::string::npos) {
+      renderer.drawText(UI_10_FONT_ID, textX, ty, reading.condition, true, EpdFontFamily::BOLD);
+      ty += condLine + 14;
+    } else {
+      renderer.drawText(UI_10_FONT_ID, textX, ty, cond.substr(0, cut).c_str(), true, EpdFontFamily::BOLD);
+      ty += condLine + 2;
+      renderer.drawText(UI_10_FONT_ID, textX, ty, cond.substr(cut + 1).c_str(), true, EpdFontFamily::BOLD);
+      ty += condLine + 12;
+    }
+  }
+
+  char line[40];
+  snprintf(line, sizeof(line), "%s %d\xC2\xB0", tr(STR_WEATHER_FEELS), reading.feels);
+  renderer.drawText(SMALL_FONT_ID, textX, ty, line, true);
+  ty += renderer.getLineHeight(SMALL_FONT_ID) + 12;
+
+  snprintf(line, sizeof(line), "%s %d\xC2\xB0", tr(STR_WEATHER_HIGH), reading.high);
+  renderer.drawText(UI_10_FONT_ID, textX, ty, line, true);
+  snprintf(line, sizeof(line), "%s %d\xC2\xB0", tr(STR_WEATHER_LOW), reading.low);
+  renderer.drawText(UI_10_FONT_ID, textX + avail / 2, ty, line, true);
+}
+
+void WeatherActivity::drawSunnyCard(const int x, const int y, const int w, const int h) const {
+  drawCard(x, y, w, h);
+
+  const int pad = 18;
+  renderer.drawText(SMALL_FONT_ID, x + pad, y + 12, tr(STR_WEATHER_SUNNY_TITLE), true);
+
+  char score[8];
+  snprintf(score, sizeof(score), "%d", reading.sunny);
+  const int scoreW = renderer.getTextWidth(NOTOSERIF_18_FONT_ID, score, EpdFontFamily::BOLD);
+  renderer.drawText(NOTOSERIF_18_FONT_ID, x + pad, y + 34, score, true, EpdFontFamily::BOLD);
+
+  if (reading.sunnyLabel[0] != '\0') {
+    renderer.drawText(UI_12_FONT_ID, x + pad + scoreW + 16, y + 46, reading.sunnyLabel, true, EpdFontFamily::BOLD);
+  }
+
+  // Horizontal gauge along the bottom of the card. A bar reads at a glance on
+  // 1-bit e-ink in a way a stepped ring does not.
+  const int barX = x + pad;
+  const int barW = w - pad * 2;
+  const int barY = y + h - 26;
+  const int barH = 12;
+  renderer.drawRect(barX, barY, barW, barH, 1, true);
+  const int fill = (barW - 4) * std::max(0, std::min(100, reading.sunny)) / 100;
+  if (fill > 0) renderer.fillRect(barX + 2, barY + 2, fill, barH - 4, true);
+}
+
+void WeatherActivity::drawDetailCard(const int x, const int y, const int w, const int h) const {
+  drawCard(x, y, w, h);
+
+  char rain[12];
+  char humidity[12];
+  char wind[12];
+  char pressure[12];
+  snprintf(rain, sizeof(rain), "%d%%", reading.rain);
+  snprintf(humidity, sizeof(humidity), "%d%%", reading.humidity);
+  snprintf(wind, sizeof(wind), "%d mph", reading.wind);
+  snprintf(pressure, sizeof(pressure), "%d mb", reading.pressure);
+
+  const int colX[2] = {x + 22, x + w / 2 + 10};
+  const int rowY[2] = {y + 20, y + h / 2 + 8};
+
+  drawStat(colX[0], rowY[0], tr(STR_WEATHER_RAIN), rain);
+  drawStat(colX[1], rowY[0], tr(STR_WEATHER_HUMIDITY), humidity);
+  drawStat(colX[0], rowY[1], tr(STR_WEATHER_WIND), wind);
+  drawStat(colX[1], rowY[1], tr(STR_WEATHER_PRESSURE), pressure);
+
+  renderer.drawLine(x + 14, y + h / 2, x + w - 14, y + h / 2, 1, true);
+  renderer.drawLine(x + w / 2, y + 14, x + w / 2, y + h - 14, 1, true);
+}
+
+void WeatherActivity::drawSunCard(const int x, const int y, const int w, const int h) const {
+  drawCard(x, y, w, h);
+  drawStat(x + 22, y + 16, tr(STR_WEATHER_SUNRISE), reading.sunrise);
+  drawStat(x + w / 2 + 10, y + 16, tr(STR_WEATHER_SUNSET), reading.sunset);
+  renderer.drawLine(x + w / 2, y + 14, x + w / 2, y + h - 14, 1, true);
+}
+
 void WeatherActivity::render(RenderLock&&) {
   const int pageWidth = renderer.getScreenWidth();
   const int pageHeight = renderer.getScreenHeight();
-  const int margin = 20;
+  const int margin = 14;
 
   renderer.clearScreen();
 
   if (!reading.valid) {
     renderer.drawCenteredText(UI_12_FONT_ID, 46, tr(STR_WEATHER_MENU), true, EpdFontFamily::BOLD);
     renderer.drawCenteredText(UI_10_FONT_ID, pageHeight / 2, statusLine ? statusLine : tr(STR_WEATHER_NO_DATA));
-    const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_DASHBOARD_REFRESH_BTN), "", "");
+    const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_DASHBOARD_REFRESH_BTN), tr(STR_WEATHER_CITY), "");
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
     renderer.displayBuffer(HalDisplay::HALF_REFRESH);
     return;
   }
 
-  renderer.drawCenteredText(SMALL_FONT_ID, 40, reading.place, true, EpdFontFamily::BOLD);
+  renderer.drawCenteredText(UI_12_FONT_ID, 26, reading.place, true, EpdFontFamily::BOLD);
 
-  char big[12];
-  snprintf(big, sizeof(big), "%d\xC2\xB0", reading.temp);
-  renderer.drawCenteredText(NOTOSERIF_18_FONT_ID, 130, big, true, EpdFontFamily::BOLD);
-  renderer.drawCenteredText(UI_12_FONT_ID, 172, reading.condition);
+  // Bento stack, sized from the panel so the X4's 480x800 lays out too. Heights
+  // are proportions of the space between the header and the footer band rather
+  // than fixed pixels, which is what let the old layout collide.
+  const int cardX = margin;
+  const int cardW = pageWidth - margin * 2;
+  const int top = 62;
+  const int bottom = pageHeight - 96;  // footer line + button hints
+  const int gap = 12;
+  const int body = bottom - top - gap * 3;
+
+  const int nowH = body * 36 / 100;
+  const int sunnyH = reading.sunny >= 0 ? body * 20 / 100 : 0;
+  const int sunH = body * 16 / 100;
+  const int detailH = body - nowH - sunnyH - sunH;
+
+  int y = top;
+  drawNowCard(cardX, y, cardW, nowH);
+  y += nowH + gap;
 
   if (reading.sunny >= 0) {
-    drawSunnyBadge(pageWidth - margin - 92, 104, 92);
+    drawSunnyCard(cardX, y, cardW, sunnyH);
+    y += sunnyH + gap;
   }
 
-  char line[48];
-  snprintf(line, sizeof(line), "%s %d\xC2\xB0", tr(STR_WEATHER_FEELS), reading.feels);
-  renderer.drawCenteredText(UI_10_FONT_ID, 208, line);
+  drawDetailCard(cardX, y, cardW, detailH);
+  y += detailH + gap;
 
-  snprintf(line, sizeof(line), "%s %d\xC2\xB0   %s %d\xC2\xB0", tr(STR_WEATHER_HIGH), reading.high,
-           tr(STR_WEATHER_LOW), reading.low);
-  renderer.drawCenteredText(UI_10_FONT_ID, 240, line);
+  drawSunCard(cardX, y, cardW, sunH);
 
-  // --- Detail rows -------------------------------------------------------
-  const int rowTop = 288;
-  const int rowH = 34;
-  struct Row {
-    const char* label;
-    char value[16];
-  } rows[5];
-
-  rows[0].label = tr(STR_WEATHER_RAIN);
-  snprintf(rows[0].value, sizeof(rows[0].value), "%d%%", reading.rain);
-  rows[1].label = tr(STR_WEATHER_HUMIDITY);
-  snprintf(rows[1].value, sizeof(rows[1].value), "%d%%", reading.humidity);
-  rows[2].label = tr(STR_WEATHER_WIND);
-  snprintf(rows[2].value, sizeof(rows[2].value), "%d mph", reading.wind);
-  rows[3].label = tr(STR_WEATHER_SUNRISE);
-  copyField(rows[3].value, sizeof(rows[3].value), reading.sunrise);
-  rows[4].label = tr(STR_WEATHER_SUNSET);
-  copyField(rows[4].value, sizeof(rows[4].value), reading.sunset);
-
-  for (int i = 0; i < 5; ++i) {
-    const int baseline = rowTop + rowH * i;
-    renderer.drawText(UI_10_FONT_ID, margin, baseline, rows[i].label);
-    const int w = renderer.getTextWidth(UI_10_FONT_ID, rows[i].value);
-    renderer.drawText(UI_10_FONT_ID, pageWidth - margin - w, baseline, rows[i].value, true, EpdFontFamily::BOLD);
-    renderer.drawLine(margin, baseline + 8, pageWidth - margin, baseline + 8, 1, true);
-  }
-
-  const char* footer = statusLine                     ? statusLine
-                       : cacheWasStale                ? tr(STR_WEATHER_CACHED)
-                                                      : tr(STR_WEATHER_UPDATED_NOW);
-  renderer.drawCenteredText(SMALL_FONT_ID, pageHeight - 62, footer);
+  const char* footer = statusLine      ? statusLine
+                       : cacheWasStale ? tr(STR_WEATHER_CACHED)
+                                       : tr(STR_WEATHER_UPDATED_NOW);
+  renderer.drawCenteredText(SMALL_FONT_ID, pageHeight - 86, footer);
 
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_DASHBOARD_REFRESH_BTN), tr(STR_WEATHER_CITY), "");
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   renderer.displayBuffer(HalDisplay::HALF_REFRESH);
-}
-
-void WeatherActivity::drawSunnyBadge(const int x, const int y, const int size) const {
-  // The SunnyDay score as a filled proportion of a box, plus the number. A ring
-  // would match the website, but the renderer has no arc primitive and a
-  // stepped circle at this size reads as a blob on 1-bit e-ink.
-  renderer.drawRect(x, y, size, size, 2, true);
-
-  const int inset = 4;
-  const int inner = size - inset * 2;
-  const int filled = inner * std::max(0, std::min(100, reading.sunny)) / 100;
-  // Fill from the bottom, like a gauge.
-  renderer.fillRect(x + inset, y + inset + (inner - filled), inner, filled, true);
-
-  char value[8];
-  snprintf(value, sizeof(value), "%d", reading.sunny);
-  const int vw = renderer.getTextWidth(UI_12_FONT_ID, value, EpdFontFamily::BOLD);
-  const int vy = y + size / 2 - renderer.getLineHeight(UI_12_FONT_ID) / 2;
-  // The numeral sits over the gauge, so its colour has to follow whichever part
-  // of the box it lands in. Above the fill line it is black on white.
-  const bool overFill = (size / 2) > (inset + inner - filled);
-  renderer.drawText(UI_12_FONT_ID, x + size / 2 - vw / 2, vy, value, !overFill, EpdFontFamily::BOLD);
-
-  if (reading.sunnyLabel[0] != '\0') {
-    const int lw = renderer.getTextWidth(SMALL_FONT_ID, reading.sunnyLabel);
-    renderer.drawText(SMALL_FONT_ID, x + size / 2 - lw / 2, y + size + 6, reading.sunnyLabel, true);
-  }
 }

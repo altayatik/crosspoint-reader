@@ -240,8 +240,8 @@ void CalendarActivity::drawGrid(const int pageWidth, const int pageHeight) const
 
   // --- Days --------------------------------------------------------------
   const int gridTop = ruleY + 8;
-  // Reserve the button-hint band at the bottom.
-  const int cellH = (pageHeight - gridTop - 62) / 6;
+  // Reserve the button-hint band plus the line of help text above it.
+  const int cellH = (pageHeight - gridTop - 104) / 6;
 
   const int firstWeekday = firstWeekdayOfMonth();
   const int total = daysInMonth(year, month);
@@ -276,7 +276,9 @@ void CalendarActivity::drawGrid(const int pageWidth, const int pageHeight) const
   }
 
   if (!haveToday) {
-    renderer.drawCenteredText(SMALL_FONT_ID, pageHeight - 66, tr(STR_CAL_NO_CLOCK));
+    // Takes the same slot as the year hint; a missing clock is the more useful
+    // thing to say, and they would otherwise sit on top of each other.
+    renderer.drawCenteredText(SMALL_FONT_ID, pageHeight - 88, tr(STR_CAL_NO_CLOCK));
   }
 }
 
@@ -324,15 +326,20 @@ void CalendarActivity::render(RenderLock&&) {
   renderer.clearScreen();
   drawGrid(pageWidth, pageHeight);
 
+  // The side-button hints are drawn rotated down the left and right edges at a
+  // fixed y, which lands on top of the month grid. A line of text in the gap
+  // above the button hints says the same thing without covering anything.
+  const int noteY = pageHeight - 88;
+
   if (mode == Mode::GoTo) {
     drawGoTo(pageWidth, pageHeight);
     const auto labels = mappedInput.mapLabels(tr(STR_CANCEL), tr(STR_CAL_JUMP), "-", "+");
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
-    GUI.drawSideButtonHints(renderer, tr(STR_CAL_FIELD), tr(STR_CAL_FIELD));
   } else {
+    // drawGrid() already owns this slot when the clock is unset.
+    if (haveToday) renderer.drawCenteredText(SMALL_FONT_ID, noteY, tr(STR_CAL_YEAR_HINT));
     const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_CAL_GOTO), "<", ">");
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
-    GUI.drawSideButtonHints(renderer, tr(STR_CAL_YEAR_PREV), tr(STR_CAL_YEAR_NEXT));
   }
 
   // HALF: paging a month is a full-content change, and FAST would ghost the

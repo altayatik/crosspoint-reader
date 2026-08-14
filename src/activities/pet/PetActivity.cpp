@@ -71,8 +71,11 @@ void PetActivity::onEnter() {
       // First meeting. Start it fresh rather than applying decades of decay
       // against a zeroed lastDay.
       state.lastDay = today;
+      state.streak = 1;
       save();
     } else if (today > state.lastDay) {
+      // A visit the very next day extends the streak; any longer gap ends it.
+      state.streak = (today - state.lastDay == 1) ? static_cast<uint16_t>(std::min(state.streak + 1, 9999)) : 0;
       advanceTo(today);
       save();
     }
@@ -127,6 +130,7 @@ bool PetActivity::load() {
   state.ageDays = doc["age"] | 0;
   state.lastDay = doc["day"] | 0;
   state.lastRestDay = doc["rest"] | 0;
+  state.streak = doc["streak"] | 0;
   const char* saved = doc["name"] | "";
   strncpy(state.name, saved, sizeof(state.name) - 1);
   state.name[sizeof(state.name) - 1] = '\0';
@@ -141,6 +145,7 @@ bool PetActivity::save() const {
   doc["age"] = state.ageDays;
   doc["day"] = state.lastDay;
   doc["rest"] = state.lastRestDay;
+  doc["streak"] = state.streak;
   doc["name"] = state.name;
 
   std::string json;
@@ -202,6 +207,15 @@ const char* PetActivity::stageLabel() const {
     default:
       return tr(STR_PET_STAGE_ELDER);
   }
+}
+
+const char* PetActivity::needsLabel() const {
+  // Ranked by what actually blocks interaction: a tired pet cannot play, a
+  // starving one is the most urgent, and boredom is the slow one.
+  if (state.hunger > 60) return tr(STR_PET_NEEDS_FOOD);
+  if (state.energy < 25) return tr(STR_PET_NEEDS_REST);
+  if (state.happiness < 45) return tr(STR_PET_NEEDS_PLAY);
+  return tr(STR_PET_NEEDS_NOTHING);
 }
 
 const char* PetActivity::displayName() const { return state.name[0] != '\0' ? state.name : stageLabel(); }
@@ -302,6 +316,11 @@ void PetActivity::drawPet(const int cx, const int cy, const int size) const {
   renderer.fillRect(cx - r + size / 8, cy - r - earH, size / 6, earH, true);
   renderer.fillRect(cx + r - size / 8 - size / 6, cy - r - earH, size / 6, earH, true);
 
+  if (stage() == Stage::Grown) {
+    // Collar: a knocked-out band across the neck.
+    renderer.fillRect(cx - r + size / 6, cy + size / 4, size - size / 3, 4, false);
+  }
+
   if (stage() == Stage::Elder) {
     // Whiskers: two knocked-out bars on the cheeks.
     renderer.fillRect(cx - r + size / 12, cy + size / 8, size / 5, 3, false);
@@ -380,9 +399,14 @@ void PetActivity::render(RenderLock&&) {
   renderer.clearScreen();
   renderer.drawCenteredText(UI_12_FONT_ID, 40, displayName(), true, EpdFontFamily::BOLD);
 
-  char subtitle[48];
-  snprintf(subtitle, sizeof(subtitle), "%s  -  %s %u", stageLabel(), tr(STR_PET_AGE),
-           static_cast<unsigned>(state.ageDays));
+  char subtitle[64];
+  if (state.streak > 1) {
+    snprintf(subtitle, sizeof(subtitle), "%s  -  %s %u  -  %s %u", stageLabel(), tr(STR_PET_AGE),
+             static_cast<unsigned>(state.ageDays), tr(STR_PET_STREAK), static_cast<unsigned>(state.streak));
+  } else {
+    snprintf(subtitle, sizeof(subtitle), "%s  -  %s %u", stageLabel(), tr(STR_PET_AGE),
+             static_cast<unsigned>(state.ageDays));
+  }
   renderer.drawCenteredText(SMALL_FONT_ID, 70, subtitle);
 
   // The pet grows with its stage, from a small hatchling to a full-size adult.
@@ -391,7 +415,15 @@ void PetActivity::render(RenderLock&&) {
   const int petSize = maxSize * STAGE_SCALE[static_cast<int>(stage())] / 100;
   drawPet(pageWidth / 2, 210, petSize);
 
+  // A ground line under the pet. Without it a floating blob reads as a bug
+  // rather than a creature, and it gives the smaller stages somewhere to be.
+  const int floorY = 210 + maxSize / 2 + 8;
+  renderer.drawLine(margin + 30, floorY, pageWidth - margin - 30, floorY, 2, true);
+  const int shadowW = petSize * 3 / 4;
+  renderer.fillRect(pageWidth / 2 - shadowW / 2, floorY + 4, shadowW, 3, true);
+
   renderer.drawCenteredText(UI_12_FONT_ID, 330, moodLabel(), true, EpdFontFamily::BOLD);
+  renderer.drawCenteredText(SMALL_FONT_ID, 358, needsLabel());
 
   const int statW = pageWidth - margin * 2;
   // Hunger is inverted for display: a full bar should always mean "good".
@@ -400,15 +432,18 @@ void PetActivity::render(RenderLock&&) {
   drawStat(margin, 498, statW, tr(STR_PET_ENERGY), state.energy);
 
   if (toast) {
-    renderer.drawCenteredText(UI_10_FONT_ID, pageHeight - 118, toast, true, EpdFontFamily::BOLD);
+    renderer.drawCenteredText(UI_10_FONT_ID, pageHeight - 140, toast, true, EpdFontFamily::BOLD);
   }
   if (!haveClock) {
-    renderer.drawCenteredText(SMALL_FONT_ID, pageHeight - 92, tr(STR_PET_NO_CLOCK));
+    renderer.drawCenteredText(SMALL_FONT_ID, pageHeight - 112, tr(STR_PET_NO_CLOCK));
   }
+
+  // A bottom note, not drawSideButtonHints: those draw rotated down the screen
+  // edges at a fixed height and clip their own text.
+  renderer.drawCenteredText(SMALL_FONT_ID, pageHeight - 86, tr(STR_PET_NAME_HINT));
 
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_PET_FEED), tr(STR_PET_REST), tr(STR_PET_PLAY));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
-  GUI.drawSideButtonHints(renderer, tr(STR_PET_NAME), "");
 
   renderer.displayBuffer(HalDisplay::HALF_REFRESH);
 }

@@ -47,8 +47,5 @@ class WorldClockActivity final : public Activity {
 
   bool haveClock = false;
   int utcMinutes = 0;
-  // Home offset from UTC in minutes, cached by utcMinutesNow() (which is where
-  // the setting is decoded) so dayOffsetFor() does not repeat the work per row.
-  mutable int homeOffsetMinutes = 0;
   unsigned long lastPollMs = 0;
 };

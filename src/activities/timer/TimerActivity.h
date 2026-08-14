@@ -19,9 +19,13 @@
  *    "TIME UP", which is about as loud as this hardware gets.
  *
  * Controls while stopped:
- *   Presets  Left/Right pick a preset, side Up switches to Custom.
- *   Custom   Left/Right change the active field, side Up/Down move between
- *            hours, minutes and seconds, Back returns to the presets.
+ *   Picking  Left/Right cycle 30s, 1m, 5m, 10m, 30m, 1h, Custom. Confirm
+ *            starts, or opens the editor when Custom is selected.
+ *   Editing  Left/Right change the active field, side Up/Down move between
+ *            hours, minutes and seconds, Confirm starts, Back goes back.
+ *
+ * Custom sits in the same cycle as the presets rather than behind a side
+ * button, because a side button is not somewhere anyone looks for it.
  */
 class TimerActivity final : public Activity {
  public:
@@ -37,7 +41,6 @@ class TimerActivity final : public Activity {
 
  private:
   enum class State : uint8_t { Idle, Running, Paused, Finished };
-  enum class Picker : uint8_t { Preset, Custom };
   enum class Field : uint8_t { Hours, Minutes, Seconds };
 
   static const uint16_t PRESET_SECONDS[];
@@ -46,13 +49,13 @@ class TimerActivity final : public Activity {
   /**
    * Seconds between repaints at a given remaining time.
    *
-   *   <= 10s   every second   the part worth watching
-   *   <= 1min  every 5s
-   *   <= 10min every 30s
-   *   <= 1h    every minute
+   *   <= 1min  every second
+   *   1-5min   every 5s
+   *   5-30min  every 30s
+   *   30-60min every minute
    *   >  1h    every 5min
    *
-   * A 25 minute pomodoro costs ~30 refreshes instead of the 1500 a per-second
+   * A 30 minute timer costs ~60 refreshes instead of the 1800 a per-second
    * repaint would.
    */
   static int repaintIntervalFor(int remaining);
@@ -67,11 +70,15 @@ class TimerActivity final : public Activity {
 
   void drawCustomFields(int pageWidth, int y) const;
 
-  State state = State::Idle;
-  Picker picker = Picker::Preset;
-  Field field = Field::Minutes;
+  /** presetIndex == PRESET_COUNT selects Custom. */
+  bool isCustom() const;
 
-  int presetIndex = 2;      // 25 minutes, the pomodoro default
+  State state = State::Idle;
+  Field field = Field::Minutes;
+  // True while the hours/minutes/seconds editor has the buttons.
+  bool editing = false;
+
+  int presetIndex = 2;      // 5 minutes
   int customSeconds = 300;  // 5:00, a sane starting point to dial from
 
   unsigned long endsAtMs = 0;

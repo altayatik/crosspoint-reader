@@ -104,6 +104,7 @@ bool NewsActivity::parseInto(const std::string& json, std::vector<Item>& out) co
     Item item;
     item.title = title;
     item.source = entry["s"] | "";
+    item.summary = entry["d"] | "";
     out.push_back(std::move(item));
   }
 
@@ -252,12 +253,12 @@ void NewsActivity::loop() {
 
 // ---------------------------------------------------------------------------
 
-int NewsActivity::wrapTitle(const std::string& title, const int width, const int maxLines,
-                            std::string* lines) const {
+int NewsActivity::wrapText(const std::string& text, const int fontId, const int width, const int maxLines,
+                           std::string* lines) const {
   int used = 0;
   size_t pos = 0;
 
-  while (pos < title.size() && used < maxLines) {
+  while (pos < text.size() && used < maxLines) {
     std::string line;
     size_t lastFit = pos;
 
@@ -265,24 +266,29 @@ int NewsActivity::wrapTitle(const std::string& title, const int width, const int
     // width that did. Measuring per word rather than per character keeps this
     // to a few getTextWidth calls per line.
     while (true) {
-      const size_t space = title.find(' ', lastFit + 1);
-      const size_t end = space == std::string::npos ? title.size() : space;
-      std::string candidate = title.substr(pos, end - pos);
+      const size_t space = text.find(' ', lastFit + 1);
+      const size_t end = space == std::string::npos ? text.size() : space;
+      std::string candidate = text.substr(pos, end - pos);
 
-      if (renderer.getTextWidth(UI_10_FONT_ID, candidate.c_str()) > width && !line.empty()) break;
+      if (renderer.getTextWidth(fontId, candidate.c_str()) > width && !line.empty()) break;
 
       line = std::move(candidate);
       lastFit = end;
-      if (end >= title.size()) break;
+      if (end >= text.size()) break;
     }
 
     if (line.empty()) break;  // a single word wider than the column
     lines[used++] = line;
     pos = lastFit;
-    while (pos < title.size() && title[pos] == ' ') ++pos;
+    while (pos < text.size() && text[pos] == ' ') ++pos;
   }
 
   return used;
+}
+
+int NewsActivity::wrapTitle(const std::string& title, const int width, const int maxLines,
+                            std::string* lines) const {
+  return wrapText(title, UI_10_FONT_ID, width, maxLines, lines);
 }
 
 void NewsActivity::render(RenderLock&&) {
@@ -305,23 +311,40 @@ void NewsActivity::render(RenderLock&&) {
   const int lineHeight = renderer.getLineHeight(UI_10_FONT_ID);
 
   if (detail) {
-    // One headline, given the whole screen. There is no article body to show --
-    // this exists so a long title that got clipped in the list is readable.
     const Item& item = items[selected];
 
     char counter[24];
     snprintf(counter, sizeof(counter), "%d / %d", selected + 1, static_cast<int>(items.size()));
     renderer.drawCenteredText(SMALL_FONT_ID, 70, counter);
 
-    std::string lines[6];
-    const int used = wrapTitle(item.title, contentWidth, 6, lines);
-    for (int i = 0; i < used; ++i) {
-      renderer.drawText(UI_12_FONT_ID, margin, 140 + i * (lineHeight + 14), lines[i].c_str(), true,
-                        EpdFontFamily::BOLD);
+    if (!item.source.empty()) {
+      renderer.drawText(UI_10_FONT_ID, margin, 100, item.source.c_str(), true, EpdFontFamily::BOLD);
+      renderer.drawLine(margin, 124, pageWidth - margin, 124, 1, true);
     }
 
-    if (!item.source.empty()) {
-      renderer.drawText(UI_10_FONT_ID, margin, 140 + used * (lineHeight + 14) + 24, item.source.c_str());
+    // Headline, in the larger face.
+    const int titleLine = renderer.getLineHeight(UI_12_FONT_ID);
+    std::string lines[5];
+    const int used = wrapText(item.title, UI_12_FONT_ID, contentWidth, 5, lines);
+    int y = 146;
+    for (int i = 0; i < used; ++i) {
+      renderer.drawText(UI_12_FONT_ID, margin, y, lines[i].c_str(), true, EpdFontFamily::BOLD);
+      y += titleLine + 6;
+    }
+
+    // The feed's standfirst. This is what the server sends as `d`; there is no
+    // full article body, and the screen says so rather than looking broken when
+    // a feed supplies nothing.
+    y += 18;
+    if (item.summary.empty()) {
+      renderer.drawText(SMALL_FONT_ID, margin, y, tr(STR_NEWS_NO_SUMMARY), true);
+    } else {
+      std::string body[12];
+      const int bodyUsed = wrapText(item.summary, UI_10_FONT_ID, contentWidth, 12, body);
+      for (int i = 0; i < bodyUsed; ++i) {
+        renderer.drawText(UI_10_FONT_ID, margin, y, body[i].c_str(), true);
+        y += lineHeight + 4;
+      }
     }
 
     const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_NEWS_LIST), "<", ">");
@@ -332,7 +355,7 @@ void NewsActivity::render(RenderLock&&) {
 
   // --- List --------------------------------------------------------------
   const int listTop = 76;
-  const int listBottom = pageHeight - 78;
+  const int listBottom = pageHeight - 96;
   const int rowH = lineHeight * TITLE_LINES + 18;
   const int perPage = std::max(1, (listBottom - listTop) / rowH);
 
@@ -375,9 +398,12 @@ void NewsActivity::render(RenderLock&&) {
   }
   renderer.drawCenteredText(SMALL_FONT_ID, pageHeight - 62, footer);
 
+  // Not drawSideButtonHints: on the X3 those are drawn rotated down the screen
+  // edges at a fixed height and clip their own text.
+  renderer.drawCenteredText(SMALL_FONT_ID, pageHeight - 86, tr(STR_NEWS_REFRESH_HINT));
+
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_NEWS_READ), "<", ">");
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
-  GUI.drawSideButtonHints(renderer, tr(STR_DASHBOARD_REFRESH_BTN), "");
 
   renderer.displayBuffer(HalDisplay::HALF_REFRESH);
 }
