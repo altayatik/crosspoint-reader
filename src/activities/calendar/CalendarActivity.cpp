@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cstdio>
 
+#include "components/AppStatusBar.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 
@@ -221,7 +222,7 @@ void CalendarActivity::drawGrid(const int pageWidth, const int pageHeight) const
   // --- Title -------------------------------------------------------------
   char title[32];
   snprintf(title, sizeof(title), "%s %d", MONTH_NAMES[month - 1], year);
-  renderer.drawCenteredText(UI_12_FONT_ID, 44, title, true, EpdFontFamily::BOLD);
+  renderer.drawCenteredText(UI_12_FONT_ID, AppStatusBar::HEIGHT + 8, title, true, EpdFontFamily::BOLD);
 
   // --- Weekday header ----------------------------------------------------
   // The rule sits a full line height below the top of the header text. The
@@ -324,6 +325,7 @@ void CalendarActivity::render(RenderLock&&) {
   const int pageHeight = renderer.getScreenHeight();
 
   renderer.clearScreen();
+  AppStatusBar::draw(renderer);
   drawGrid(pageWidth, pageHeight);
 
   // The side-button hints are drawn rotated down the left and right edges at a
@@ -344,5 +346,5 @@ void CalendarActivity::render(RenderLock&&) {
 
   // HALF: paging a month is a full-content change, and FAST would ghost the
   // previous month's digits underneath.
-  renderer.displayBuffer(HalDisplay::HALF_REFRESH);
+  renderer.displayBuffer(refresh_.next());
 }

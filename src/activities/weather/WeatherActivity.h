@@ -5,6 +5,7 @@
 
 #include "MappedInputManager.h"
 #include "activities/Activity.h"
+#include "components/RefreshPolicy.h"
 
 /**
  * Offline-first weather.
@@ -84,4 +85,7 @@ class WeatherActivity final : public Activity {
   bool busy = false;
   bool cacheWasStale = false;
   const char* statusLine = nullptr;
+
+  // Clean waveform on entry, differential for interaction. See RefreshPolicy.
+  RefreshPolicy refresh_;
 };

@@ -6,6 +6,7 @@
 
 #include "MappedInputManager.h"
 #include "activities/Activity.h"
+#include "components/RefreshPolicy.h"
 
 /**
  * A plain month calendar off the DS3231.
@@ -65,4 +66,7 @@ class CalendarActivity final : public Activity {
   int pickYear = 2026;
   int pickMonth = 1;
   int pickDay = 1;
+
+  // Clean waveform on entry, differential for interaction. See RefreshPolicy.
+  RefreshPolicy refresh_;
 };

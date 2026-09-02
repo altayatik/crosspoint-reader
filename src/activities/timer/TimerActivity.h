@@ -4,6 +4,7 @@
 
 #include "MappedInputManager.h"
 #include "activities/Activity.h"
+#include "components/RefreshPolicy.h"
 
 /**
  * Countdown timer with pomodoro presets and a manually dialled duration.
@@ -86,4 +87,7 @@ class TimerActivity final : public Activity {
 
   // Bucket index of the last painted frame; a repaint happens when it changes.
   int lastPaintBucket = -1;
+
+  // Clean waveform on entry, differential for interaction. See RefreshPolicy.
+  RefreshPolicy refresh_;
 };

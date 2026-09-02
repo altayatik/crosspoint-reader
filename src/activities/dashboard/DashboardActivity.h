@@ -56,8 +56,8 @@ class DashboardActivity final : public Activity {
   /** Advance the persisted theme override: Auto -> Light -> Night -> Auto. */
   void cycleTheme();
 
+  /** Wait for NetService's link. */
   bool connectWifi();
-  void shutdownWifi() const;
 
   /** Download to the temp path. Returns false on any HTTP-layer failure. */
   bool download(const std::string& url);

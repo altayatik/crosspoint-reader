@@ -4,6 +4,7 @@
 
 #include "MappedInputManager.h"
 #include "activities/Activity.h"
+#include "components/RefreshPolicy.h"
 
 /**
  * World clocks, computed from the RTC and fixed UTC offsets.
@@ -48,4 +49,7 @@ class WorldClockActivity final : public Activity {
   bool haveClock = false;
   int utcMinutes = 0;
   unsigned long lastPollMs = 0;
+
+  // Clean waveform on entry, differential for interaction. See RefreshPolicy.
+  RefreshPolicy refresh_;
 };

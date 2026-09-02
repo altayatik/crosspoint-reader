@@ -27,12 +27,15 @@
 #include "components/UITheme.h"
 #include "fontIds.h"
 
-const StrId SettingsActivity::categoryNames[categoryCount] = {StrId::STR_CAT_DISPLAY, StrId::STR_CAT_READER,
-                                                              StrId::STR_CAT_CONTROLS, StrId::STR_CAT_SYSTEM};
+// No Reader tab: this build is a dashboard, not an e-reader. The reader
+// settings still exist in getSettingsList() so the web settings API and the
+// on-disk JSON keep their shape, they are simply not offered on the device.
+const StrId SettingsActivity::categoryNames[categoryCount] = {StrId::STR_CAT_DISPLAY, StrId::STR_CAT_CONTROLS,
+                                                              StrId::STR_CAT_SYSTEM};
 
 void SettingsActivity::rebuildSettingsLists() {
   displaySettings.clear();
-  readerSettings.clear();
+
   controlsSettings.clear();
   systemSettings.clear();
 
@@ -50,10 +53,9 @@ void SettingsActivity::rebuildSettingsLists() {
     if (setting.category == StrId::STR_CAT_DISPLAY) {
       displaySettings.push_back(setting);
     } else if (setting.category == StrId::STR_CAT_READER) {
-      // Settings merged into "Text Settings"
-      // (they stay in the shared list for the web settings API)
-      if (setting.inTextSettings) continue;
-      readerSettings.push_back(setting);
+      // Dropped from the device UI; still present in the shared list above so
+      // the web settings API and settings.json are unchanged.
+      continue;
     } else if (setting.category == StrId::STR_CAT_CONTROLS) {
       if (setting.valuePtr == &CrossPointSettings::pwrBtnFootnoteBack &&
           SETTINGS.shortPwrBtn != CrossPointSettings::SHORT_PWRBTN::FOOTNOTES) {
@@ -80,11 +82,6 @@ void SettingsActivity::rebuildSettingsLists() {
   }
   systemSettings.push_back(SettingInfo::Action(StrId::STR_SD_FIRMWARE_UPDATE, SettingAction::SdFirmwareUpdate));
   systemSettings.push_back(SettingInfo::Action(StrId::STR_LANGUAGE, SettingAction::Language));
-  readerSettings.insert(readerSettings.begin(),
-                        SettingInfo::Action(StrId::STR_TEXT_SETTINGS, SettingAction::TextSettings));
-  readerSettings.insert(readerSettings.begin() + 1,
-                        SettingInfo::Action(StrId::STR_MANAGE_FONTS, SettingAction::DownloadFonts));
-  readerSettings.push_back(SettingInfo::Action(StrId::STR_CUSTOMISE_STATUS_BAR, SettingAction::CustomiseStatusBar));
 
   // Update currentSettings pointer and count for the active category
   switch (selectedCategoryIndex) {
@@ -92,12 +89,9 @@ void SettingsActivity::rebuildSettingsLists() {
       currentSettings = &displaySettings;
       break;
     case 1:
-      currentSettings = &readerSettings;
-      break;
-    case 2:
       currentSettings = &controlsSettings;
       break;
-    case 3:
+    case 2:
       currentSettings = &systemSettings;
       break;
   }
@@ -138,12 +132,9 @@ void SettingsActivity::loop() {
         currentSettings = &displaySettings;
         break;
       case 1:
-        currentSettings = &readerSettings;
-        break;
-      case 2:
         currentSettings = &controlsSettings;
         break;
-      case 3:
+      case 2:
         currentSettings = &systemSettings;
         break;
     }

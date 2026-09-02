@@ -29,6 +29,7 @@
 #include "activities/Activity.h"
 #include "activities/ActivityManager.h"
 #include "activities/dashboard/DashboardActivity.h"
+#include "network/NetService.h"
 #include "activities/settings/SdFirmwareUpdateActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
@@ -489,6 +490,11 @@ void setup() {
     delay(10);
     gpio.update();
   }
+
+  // Last, so the SD card is mounted (the credential store lives there) and the
+  // first screen is already painted while association runs in the background.
+  // No screen brings Wi-Fi up for itself any more.
+  NET.begin();
 
   allowSleepAt = millis() + 2000;
 }

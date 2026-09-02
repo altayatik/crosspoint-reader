@@ -6,6 +6,7 @@
 
 #include "MappedInputManager.h"
 #include "activities/Activity.h"
+#include "components/RefreshPolicy.h"
 
 /**
  * Headlines from /api/x3-news.json.
@@ -49,7 +50,6 @@ class NewsActivity final : public Activity {
   std::string buildUrl() const;
 
   void refresh();
-  void shutdownWifi() const;
 
   /** Split a headline across at most `maxLines` lines of `width` pixels. */
   int wrapTitle(const std::string& title, int width, int maxLines, std::string* lines) const;
@@ -74,4 +74,7 @@ class NewsActivity final : public Activity {
   bool cacheWasStale = false;
   bool detail = false;
   const char* statusLine = nullptr;
+
+  // Clean waveform on entry, differential for interaction. See RefreshPolicy.
+  RefreshPolicy refresh_;
 };

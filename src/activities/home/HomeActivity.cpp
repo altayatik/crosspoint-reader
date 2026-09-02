@@ -18,18 +18,12 @@
 #include "MappedInputManager.h"
 #include "OpdsServerStore.h"
 #include "RecentBooksStore.h"
+#include "components/AppStatusBar.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 
 int HomeActivity::getMenuItemCount() const {
-  int count = 10;  // Browser, Transfer, Settings, Dashboard, Calendar, Clock, Timer, Weather, News, Pet
-  if (!recentBooks.empty()) {
-    count += recentBooks.size();
-  }
-  if (hasOpdsServers) {
-    count++;
-  }
-  return count;
+  return MENU_COUNT + static_cast<int>(recentBooks.size());
 }
 
 void HomeActivity::loadRecentBooks(int maxBooks) {
@@ -179,15 +173,6 @@ void HomeActivity::loop() {
     }
     const int menuIndex = selectorIndex - static_cast<int>(recentBooks.size());
     switch (indexToMenuItem(menuIndex, hasOpdsServers)) {
-      case HomeMenuItem::FILE_BROWSER:
-        onFileBrowserOpen();
-        break;
-      case HomeMenuItem::RECENTS:
-        onRecentsOpen();
-        break;
-      case HomeMenuItem::OPDS_BROWSER:
-        onOpdsBrowserOpen();
-        break;
       case HomeMenuItem::FILE_TRANSFER:
         onFileTransferOpen();
         break;
@@ -274,7 +259,7 @@ void HomeActivity::loop() {
   // Must agree with render(): the cover band collapses to zero when there are
   // no recents, and rows are drawn from menuScroll onward.
   const int coverTileHeight = recentBooks.empty() ? 0 : metrics.homeCoverTileHeight;
-  const int menuTop = metrics.homeTopPadding + coverTileHeight + metrics.homeMenuTopOffset;
+  const int menuTop = AppStatusBar::HEIGHT + coverTileHeight + metrics.homeMenuTopOffset;
   const int renderedMenuCount =
       menuCount - (metrics.homeContinueReadingInMenu ? 0 : static_cast<int>(recentBooks.size()));
   int menuRow = -1;
@@ -317,8 +302,9 @@ void HomeActivity::render(RenderLock&&) {
     bufferRestored = coverBufferStored && restoreCoverBuffer();
   }
 
-  GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.homeTopPadding},
-                 metrics.homeContinueReadingInMenu && !recentBooks.empty() ? recentBooks[0].title.c_str() : nullptr);
+  // The device nameplate is gone; this is the same bar every app screen draws,
+  // so Home stops being the odd one out.
+  AppStatusBar::draw(renderer);
 
   if (coverTileHeight > 0) {
     // Record the tile rect so storeCoverBuffer (called from the theme) knows
@@ -336,19 +322,12 @@ void HomeActivity::render(RenderLock&&) {
 
   // Build menu items dynamically
   // Recents dropped: this device is a dashboard, not a reader.
-  std::vector<const char*> menuItems = {tr(STR_BROWSE_FILES),    tr(STR_FILE_TRANSFER),   tr(STR_SETTINGS_TITLE),
-                                        tr(STR_DASHBOARD_MENU),  tr(STR_CALENDAR_MENU),   tr(STR_WORLDCLOCK_MENU),
-                                        tr(STR_TIMER_MENU),      tr(STR_WEATHER_MENU),    tr(STR_NEWS_MENU),
-                                        tr(STR_PET_MENU)};
+  std::vector<const char*> menuItems = {tr(STR_FILE_TRANSFER),  tr(STR_SETTINGS_TITLE), tr(STR_DASHBOARD_MENU),
+                                        tr(STR_CALENDAR_MENU),  tr(STR_WORLDCLOCK_MENU), tr(STR_TIMER_MENU),
+                                        tr(STR_WEATHER_MENU),   tr(STR_NEWS_MENU),      tr(STR_PET_MENU)};
   // The icon set has no calendar/clock/timer glyphs, so these reuse the closest
   // existing marks rather than shipping half-drawn 24px bitmaps.
-  std::vector<UIIcon> menuIcons = {Folder, Transfer, Settings, Transfer, Recent,
-                                   Recent, Recent,   Transfer, Book,     Book};
-
-  if (hasOpdsServers) {
-    menuItems.insert(menuItems.begin() + 1, tr(STR_OPDS_BROWSER));
-    menuIcons.insert(menuIcons.begin() + 1, Library);
-  }
+  std::vector<UIIcon> menuIcons = {Transfer, Settings, Transfer, Recent, Recent, Recent, Transfer, Book, Book};
 
   if (metrics.homeContinueReadingInMenu && !recentBooks.empty()) {
     // Insert Continue Reading at the top if enabled in theme
@@ -359,7 +338,7 @@ void HomeActivity::render(RenderLock&&) {
   // drawButtonMenu draws every row it is given, top-down, with no clipping, so
   // the window has to be computed here: hand it only the rows that fit and
   // offset the label/icon lookups by the scroll position.
-  const int menuTop = metrics.homeTopPadding + coverTileHeight + metrics.homeMenuTopOffset;
+  const int menuTop = AppStatusBar::HEIGHT + coverTileHeight + metrics.homeMenuTopOffset;
   const int rowPitch = metrics.menuRowHeight + metrics.menuSpacing;
   const int menuBottom = pageHeight - metrics.buttonHintsHeight - metrics.verticalSpacing;
   const int total = static_cast<int>(menuItems.size());
@@ -380,8 +359,7 @@ void HomeActivity::render(RenderLock&&) {
       [&menuItems, scroll](int index) { return std::string(menuItems[index + scroll]); },
       [&menuIcons, scroll](int index) { return menuIcons[index + scroll]; });
 
-  const auto labels = mappedInput.mapLabels(recentBooks.empty() ? "" : tr(STR_RESUME), tr(STR_SELECT), tr(STR_DIR_UP),
-                                            tr(STR_DIR_DOWN));
+  const auto labels = mappedInput.mapLabels("", tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
   renderer.displayBuffer();
@@ -396,10 +374,6 @@ void HomeActivity::render(RenderLock&&) {
 }
 
 void HomeActivity::onSelectBook(const std::string& path) { activityManager.goToReader(path); }
-
-void HomeActivity::onFileBrowserOpen() { activityManager.goToFileBrowser(); }
-
-void HomeActivity::onRecentsOpen() { activityManager.goToRecentBooks(); }
 
 void HomeActivity::onSettingsOpen() { activityManager.goToSettings(); }
 
@@ -419,4 +393,3 @@ void HomeActivity::onPetOpen() { activityManager.goToPet(); }
 
 void HomeActivity::onFileTransferOpen() { activityManager.goToFileTransfer(); }
 
-void HomeActivity::onOpdsBrowserOpen() { activityManager.goToBrowser(); }

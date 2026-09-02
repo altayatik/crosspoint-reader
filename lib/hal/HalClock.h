@@ -38,6 +38,11 @@ class HalClock {
   // Returns false if RTC is not available.
   bool formatTime(char* buf, size_t bufSize, uint8_t utcOffsetQuarterHoursBiased = 48, bool use12Hour = false) const;
 
+  // Write a wall-clock reading to the RTC. The caller is responsible for the
+  // value being sane and in whatever zone the rest of the firmware expects
+  // (local, in this build -- see NetService::syncClock).
+  bool setDateTime(const Rtc::DateTime& dt);
+
   // Sync the RTC from an NTP server. Requires WiFi to be connected.
   // Blocks for up to ~5s while waiting for SNTP response.
   // Returns true if the RTC was successfully updated.

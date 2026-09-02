@@ -14,6 +14,7 @@
 #include <string>
 
 #include "activities/util/KeyboardEntryActivity.h"
+#include "components/AppStatusBar.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 
@@ -30,6 +31,10 @@ constexpr int ENERGY_PER_DAY = 8;
 constexpr int FEED_AMOUNT = 35;
 constexpr int PLAY_HAPPINESS = 25;
 constexpr int PLAY_ENERGY_COST = 12;
+
+// Slow on purpose. Each step is an e-ink refresh, so this is the difference
+// between a pet that moves and a pet that flashes the screen at you.
+constexpr unsigned long ANIM_INTERVAL_MS = 6000;
 
 int clamp8(const int value) { return std::max(0, std::min(100, value)); }
 
@@ -268,8 +273,36 @@ void PetActivity::play() {
   save();
 }
 
+void PetActivity::stepAnimation() {
+  ++animFrame;
+  // A four-beat cycle: rest, hop, rest, turn. Slow enough that the panel is not
+  // being driven constantly, quick enough to read as alive.
+  switch (animFrame % 4) {
+    case 1:
+      hopOffset = -6;
+      break;
+    case 3:
+      hopOffset = -3;
+      facingLeft = !facingLeft;
+      break;
+    default:
+      hopOffset = 0;
+      break;
+  }
+}
+
 void PetActivity::loop() {
   Activity::loop();
+
+  // A sleeping pet stays still; anything else shuffles every few seconds.
+  if (mood() != Mood::Asleep) {
+    const unsigned long now = millis();
+    if (now - lastAnimMs >= ANIM_INTERVAL_MS) {
+      lastAnimMs = now;
+      stepAnimation();
+      requestUpdate();
+    }
+  }
 
   if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
     activityManager.goHome();
@@ -277,16 +310,19 @@ void PetActivity::loop() {
   }
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
     feed();
+    refresh_.markDirty();
     requestUpdate();
     return;
   }
   if (mappedInput.wasReleased(MappedInputManager::Button::Right)) {
     play();
+    refresh_.markDirty();
     requestUpdate();
     return;
   }
   if (mappedInput.wasReleased(MappedInputManager::Button::Left)) {
     rest();
+    refresh_.markDirty();
     requestUpdate();
     return;
   }
@@ -397,7 +433,8 @@ void PetActivity::render(RenderLock&&) {
   const int margin = 24;
 
   renderer.clearScreen();
-  renderer.drawCenteredText(UI_12_FONT_ID, 40, displayName(), true, EpdFontFamily::BOLD);
+  AppStatusBar::draw(renderer);
+  renderer.drawCenteredText(UI_12_FONT_ID, AppStatusBar::HEIGHT + 6, displayName(), true, EpdFontFamily::BOLD);
 
   char subtitle[64];
   if (state.streak > 1) {
@@ -407,13 +444,13 @@ void PetActivity::render(RenderLock&&) {
     snprintf(subtitle, sizeof(subtitle), "%s  -  %s %u", stageLabel(), tr(STR_PET_AGE),
              static_cast<unsigned>(state.ageDays));
   }
-  renderer.drawCenteredText(SMALL_FONT_ID, 70, subtitle);
+  renderer.drawCenteredText(SMALL_FONT_ID, AppStatusBar::HEIGHT + 34, subtitle);
 
   // The pet grows with its stage, from a small hatchling to a full-size adult.
   const int maxSize = std::min(pageWidth - margin * 4, 210);
   static constexpr int STAGE_SCALE[5] = {55, 70, 85, 100, 95};
   const int petSize = maxSize * STAGE_SCALE[static_cast<int>(stage())] / 100;
-  drawPet(pageWidth / 2, 210, petSize);
+  drawPet(pageWidth / 2 + (facingLeft ? -12 : 12), 210 + hopOffset, petSize);
 
   // A ground line under the pet. Without it a floating blob reads as a bug
   // rather than a creature, and it gives the smaller stages somewhere to be.
@@ -431,6 +468,17 @@ void PetActivity::render(RenderLock&&) {
   drawStat(margin, 440, statW, tr(STR_PET_HAPPINESS), state.happiness);
   drawStat(margin, 498, statW, tr(STR_PET_ENERGY), state.energy);
 
+  // The pet is the one screen people leave open, so it earns a big clock.
+  Rtc::DateTime now;
+  if (halClock.isAvailable() && halClock.getDateTime(now)) {
+    const bool pm = now.hour >= 12;
+    int hour12 = now.hour % 12;
+    if (hour12 == 0) hour12 = 12;
+    char clock[16];
+    snprintf(clock, sizeof(clock), "%d:%02d %s", hour12, now.minute, pm ? "PM" : "AM");
+    renderer.drawCenteredText(UI_12_FONT_ID, pageHeight - 168, clock, true, EpdFontFamily::BOLD);
+  }
+
   if (toast) {
     renderer.drawCenteredText(UI_10_FONT_ID, pageHeight - 140, toast, true, EpdFontFamily::BOLD);
   }
@@ -445,5 +493,5 @@ void PetActivity::render(RenderLock&&) {
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_PET_FEED), tr(STR_PET_REST), tr(STR_PET_PLAY));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
-  renderer.displayBuffer(HalDisplay::HALF_REFRESH);
+  renderer.displayBuffer(refresh_.next());
 }

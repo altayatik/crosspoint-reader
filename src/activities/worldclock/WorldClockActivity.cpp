@@ -9,6 +9,7 @@
 #include <cstdio>
 
 #include "CrossPointSettings.h"
+#include "components/AppStatusBar.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 
@@ -98,17 +99,17 @@ void WorldClockActivity::render(RenderLock&&) {
   const int margin = 20;
 
   renderer.clearScreen();
-  renderer.drawCenteredText(UI_12_FONT_ID, 46, tr(STR_WORLDCLOCK_TITLE), true, EpdFontFamily::BOLD);
+  AppStatusBar::draw(renderer, tr(STR_WORLDCLOCK_TITLE));
 
   if (!haveClock) {
     renderer.drawCenteredText(UI_10_FONT_ID, pageHeight / 2, tr(STR_CAL_NO_CLOCK));
     const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_DASHBOARD_REFRESH_BTN), "", "");
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
-    renderer.displayBuffer(HalDisplay::HALF_REFRESH);
+    renderer.displayBuffer(refresh_.next());
     return;
   }
 
-  const int listTop = 84;
+  const int listTop = AppStatusBar::HEIGHT + 18;
   const int rowH = (pageHeight - listTop - 56) / ZONE_COUNT;
 
   for (int i = 0; i < ZONE_COUNT; ++i) {
@@ -148,5 +149,5 @@ void WorldClockActivity::render(RenderLock&&) {
 
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_DASHBOARD_REFRESH_BTN), "", "");
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
-  renderer.displayBuffer(HalDisplay::HALF_REFRESH);
+  renderer.displayBuffer(refresh_.next());
 }

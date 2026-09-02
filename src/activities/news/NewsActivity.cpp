@@ -7,16 +7,16 @@
 #include <HalStorage.h>
 #include <I18n.h>
 #include <Logging.h>
-#include <WiFi.h>
 
 #include <algorithm>
 #include <cstdio>
 
 #include "CrossPointSettings.h"
-#include "WifiCredentialStore.h"
+#include "components/AppStatusBar.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "network/HttpDownloader.h"
+#include "network/NetService.h"
 
 namespace {
 
@@ -31,51 +31,36 @@ void NewsActivity::onEnter() {
   Activity::onEnter();
   Storage.mkdir("/.crosspoint");
 
-  const bool haveCache = loadCache();
+  // Cache first so something is on screen immediately, then always go and get
+  // fresh headlines. Stale news is the one thing a news app must not serve, and
+  // the server caches for 15 minutes so this costs one small request.
+  loadCache();
   requestUpdate();
-
-  if (!haveCache) refresh();
+  refresh();
 }
 
 void NewsActivity::onExit() {
-  shutdownWifi();
+  // The radio stays up; NetService owns it.
   Activity::onExit();
-}
-
-void NewsActivity::shutdownWifi() const {
-  if (WiFi.getMode() != WIFI_MODE_NULL) {
-    WiFi.disconnect(true);
-    WiFi.mode(WIFI_OFF);
-  }
 }
 
 void NewsActivity::refresh() {
   busy = true;
   statusLine = tr(STR_NEWS_FETCHING);
+  // A whole new list of headlines is a full-screen change, so the differential
+  // waveform would leave the old ones showing through.
+  refresh_.markDirty();
   requestUpdateAndWait();
 
   statusLine = fetchNow() ? nullptr : tr(STR_NEWS_OFFLINE);
   busy = false;
-  shutdownWifi();
+  refresh_.markDirty();
   requestUpdate();
 }
 
 // ---------------------------------------------------------------------------
 
-std::string NewsActivity::buildUrl() const {
-  // Same derivation as the weather app: one host to configure, not three.
-  std::string url(SETTINGS.dashboardUrl);
-  if (url.empty()) return url;
-
-  const size_t query = url.find('?');
-  if (query != std::string::npos) url.erase(query);
-
-  const size_t slash = url.find_last_of('/');
-  if (slash == std::string::npos) return std::string();
-  url.erase(slash + 1);
-  url += "x3-news.json";
-  return url;
-}
+std::string NewsActivity::buildUrl() const { return NetService::apiUrl("x3-news.json"); }
 
 bool NewsActivity::parseInto(const std::string& json, std::vector<Item>& out) const {
   JsonDocument doc;
@@ -145,32 +130,9 @@ bool NewsActivity::fetchNow() {
 
   HalPowerManager::Lock powerLock;
 
-  if (WiFi.status() != WL_CONNECTED) {
-    WIFI_STORE.loadFromFile();
-    if (WIFI_STORE.getCredentialCount() == 0) {
-      LOG_ERR("NWS", "No saved WiFi");
-      return false;
-    }
-    WiFi.persistent(false);
-    WiFi.mode(WIFI_STA);
-
-    const std::string last = WIFI_STORE.getLastConnectedSsid();
-    const auto credential = !last.empty() ? WIFI_STORE.findCredential(last) : WIFI_STORE.getCredentialAt(0);
-    if (!credential) return false;
-
-    if (credential->password.empty()) {
-      WiFi.begin(credential->ssid.c_str());
-    } else {
-      WiFi.begin(credential->ssid.c_str(), credential->password.c_str());
-    }
-
-    const unsigned long deadline =
-        millis() + std::max<unsigned long>(5, SETTINGS.dashboardWifiTimeoutSeconds) * 1000UL;
-    while (WiFi.status() != WL_CONNECTED && millis() < deadline) delay(100);
-    if (WiFi.status() != WL_CONNECTED) {
-      LOG_ERR("NWS", "WiFi timeout");
-      return false;
-    }
+  if (!NET.ensureConnected(std::max<uint32_t>(5, SETTINGS.dashboardWifiTimeoutSeconds) * 1000UL)) {
+    LOG_ERR("NWS", NET.hasCredentials() ? "No network" : "No saved WiFi");
+    return false;
   }
 
   std::string body;
@@ -213,6 +175,7 @@ void NewsActivity::loop() {
   if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
     if (detail) {
       detail = false;
+      refresh_.markDirty();
       requestUpdate();
     } else {
       activityManager.goHome();
@@ -225,6 +188,7 @@ void NewsActivity::loop() {
       refresh();
     } else {
       detail = !detail;
+      refresh_.markDirty();
       requestUpdate();
     }
     return;
@@ -297,13 +261,13 @@ void NewsActivity::render(RenderLock&&) {
   const int margin = 20;
 
   renderer.clearScreen();
-  renderer.drawCenteredText(UI_12_FONT_ID, 40, tr(STR_NEWS_MENU), true, EpdFontFamily::BOLD);
+  AppStatusBar::draw(renderer, tr(STR_NEWS_MENU));
 
   if (items.empty()) {
     renderer.drawCenteredText(UI_10_FONT_ID, pageHeight / 2, statusLine ? statusLine : tr(STR_NEWS_NO_DATA));
     const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_DASHBOARD_REFRESH_BTN), "", "");
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
-    renderer.displayBuffer(HalDisplay::HALF_REFRESH);
+    renderer.displayBuffer(refresh_.next());
     return;
   }
 
@@ -315,18 +279,19 @@ void NewsActivity::render(RenderLock&&) {
 
     char counter[24];
     snprintf(counter, sizeof(counter), "%d / %d", selected + 1, static_cast<int>(items.size()));
-    renderer.drawCenteredText(SMALL_FONT_ID, 70, counter);
+    renderer.drawCenteredText(SMALL_FONT_ID, AppStatusBar::HEIGHT + 8, counter);
 
     if (!item.source.empty()) {
-      renderer.drawText(UI_10_FONT_ID, margin, 100, item.source.c_str(), true, EpdFontFamily::BOLD);
-      renderer.drawLine(margin, 124, pageWidth - margin, 124, 1, true);
+      renderer.drawText(UI_10_FONT_ID, margin, AppStatusBar::HEIGHT + 32, item.source.c_str(), true,
+                        EpdFontFamily::BOLD);
+      renderer.drawLine(margin, AppStatusBar::HEIGHT + 56, pageWidth - margin, AppStatusBar::HEIGHT + 56, 1, true);
     }
 
     // Headline, in the larger face.
     const int titleLine = renderer.getLineHeight(UI_12_FONT_ID);
     std::string lines[5];
     const int used = wrapText(item.title, UI_12_FONT_ID, contentWidth, 5, lines);
-    int y = 146;
+    int y = AppStatusBar::HEIGHT + 78;
     for (int i = 0; i < used; ++i) {
       renderer.drawText(UI_12_FONT_ID, margin, y, lines[i].c_str(), true, EpdFontFamily::BOLD);
       y += titleLine + 6;
@@ -349,12 +314,12 @@ void NewsActivity::render(RenderLock&&) {
 
     const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_NEWS_LIST), "<", ">");
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
-    renderer.displayBuffer(HalDisplay::HALF_REFRESH);
+    renderer.displayBuffer(refresh_.next());
     return;
   }
 
   // --- List --------------------------------------------------------------
-  const int listTop = 76;
+  const int listTop = AppStatusBar::HEIGHT + 10;
   const int listBottom = pageHeight - 96;
   const int rowH = lineHeight * TITLE_LINES + 18;
   const int perPage = std::max(1, (listBottom - listTop) / rowH);
@@ -405,5 +370,5 @@ void NewsActivity::render(RenderLock&&) {
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_NEWS_READ), "<", ">");
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
-  renderer.displayBuffer(HalDisplay::HALF_REFRESH);
+  renderer.displayBuffer(refresh_.next());
 }

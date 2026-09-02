@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cstdio>
 
+#include "components/AppStatusBar.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 
@@ -243,16 +244,18 @@ void TimerActivity::render(RenderLock&&) {
   if (state == State::Finished) {
     // The alarm. No buzzer on this hardware, so the panel itself is the alert:
     // full-screen inverted, which is the loudest thing a 1-bit display can do.
+    // No status bar here on purpose: the alarm should be unmistakable, and a
+    // strip of normal UI across the top softens it.
     renderer.clearScreen();
     renderer.fillRect(0, 0, pageWidth, pageHeight, true);
     renderer.drawCenteredText(UI_12_FONT_ID, pageHeight / 2 - 10, tr(STR_TIMER_DONE), false, EpdFontFamily::BOLD);
     renderer.drawCenteredText(UI_10_FONT_ID, pageHeight / 2 + 30, tr(STR_TIMER_DISMISS), false);
-    renderer.displayBuffer(HalDisplay::HALF_REFRESH);
+    renderer.displayBuffer(refresh_.next());
     return;
   }
 
   renderer.clearScreen();
-  renderer.drawCenteredText(UI_12_FONT_ID, 46, tr(STR_TIMER_TITLE), true, EpdFontFamily::BOLD);
+  AppStatusBar::draw(renderer, tr(STR_TIMER_TITLE));
 
   const int remaining = remainingSeconds();
   char clock[16];

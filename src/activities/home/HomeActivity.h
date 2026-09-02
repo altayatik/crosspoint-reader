@@ -38,52 +38,25 @@ class HomeActivity final : public Activity {
   mutable int menuScroll = 0;
   const HomeMenuItem initialMenuItem;
 
-  // Convert HomeMenuItem to menu index (used in onEnter)
-  static int menuItemToIndex(HomeMenuItem item, bool hasOpdsUrl) {
-    int i = 0;
-    if (item == HomeMenuItem::FILE_BROWSER) return i;
-    ++i;
-    if (item == HomeMenuItem::OPDS_BROWSER) return hasOpdsUrl ? i : 0;
-    if (hasOpdsUrl) ++i;
-    if (item == HomeMenuItem::FILE_TRANSFER) return i;
-    ++i;
-    if (item == HomeMenuItem::SETTINGS_MENU) return i;
-    ++i;
-    if (item == HomeMenuItem::DASHBOARD) return i;
-    ++i;
-    if (item == HomeMenuItem::CALENDAR) return i;
-    ++i;
-    if (item == HomeMenuItem::WORLDCLOCK) return i;
-    ++i;
-    if (item == HomeMenuItem::TIMER) return i;
-    ++i;
-    if (item == HomeMenuItem::WEATHER) return i;
-    ++i;
-    if (item == HomeMenuItem::NEWS) return i;
-    ++i;
-    if (item == HomeMenuItem::PET) return i;
+  // The menu, in order. No file browser and no OPDS: this device is a
+  // dashboard, and neither entry leads anywhere without the reader.
+  static constexpr HomeMenuItem MENU_ORDER[] = {
+      HomeMenuItem::FILE_TRANSFER, HomeMenuItem::SETTINGS_MENU, HomeMenuItem::DASHBOARD,
+      HomeMenuItem::CALENDAR,      HomeMenuItem::WORLDCLOCK,    HomeMenuItem::TIMER,
+      HomeMenuItem::WEATHER,       HomeMenuItem::NEWS,          HomeMenuItem::PET};
+  static constexpr int MENU_COUNT = sizeof(MENU_ORDER) / sizeof(MENU_ORDER[0]);
+
+  static int menuItemToIndex(HomeMenuItem item, bool) {
+    for (int i = 0; i < MENU_COUNT; ++i) {
+      if (MENU_ORDER[i] == item) return i;
+    }
     return 0;
   }
 
-  // Convert menu index to HomeMenuItem (used in loop)
-  static HomeMenuItem indexToMenuItem(int idx, bool hasOpdsUrl) {
-    int i = 0;
-    if (idx == i++) return HomeMenuItem::FILE_BROWSER;
-    if (hasOpdsUrl && idx == i++) return HomeMenuItem::OPDS_BROWSER;
-    if (idx == i++) return HomeMenuItem::FILE_TRANSFER;
-    if (idx == i++) return HomeMenuItem::SETTINGS_MENU;
-    if (idx == i++) return HomeMenuItem::DASHBOARD;
-    if (idx == i++) return HomeMenuItem::CALENDAR;
-    if (idx == i++) return HomeMenuItem::WORLDCLOCK;
-    if (idx == i++) return HomeMenuItem::TIMER;
-    if (idx == i++) return HomeMenuItem::WEATHER;
-    if (idx == i++) return HomeMenuItem::NEWS;
-    if (idx == i) return HomeMenuItem::PET;
-    return HomeMenuItem::NONE;
+  static HomeMenuItem indexToMenuItem(int idx, bool) {
+    return (idx >= 0 && idx < MENU_COUNT) ? MENU_ORDER[idx] : HomeMenuItem::NONE;
   }
   void onSelectBook(const std::string& path);
-  void onFileBrowserOpen();
-  void onRecentsOpen();
   void onSettingsOpen();
   void onDashboardOpen();
   void onCalendarOpen();
@@ -93,7 +66,6 @@ class HomeActivity final : public Activity {
   void onNewsOpen();
   void onPetOpen();
   void onFileTransferOpen();
-  void onOpdsBrowserOpen();
 
   int getMenuItemCount() const;
   bool storeCoverBuffer();    // Store frame buffer for cover image

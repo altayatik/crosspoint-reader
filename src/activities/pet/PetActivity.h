@@ -4,6 +4,7 @@
 
 #include "MappedInputManager.h"
 #include "activities/Activity.h"
+#include "components/RefreshPolicy.h"
 
 /**
  * A virtual pet that lives on the SD card.
@@ -80,6 +81,13 @@ class PetActivity final : public Activity {
   void rest();
   void rename();
 
+  /**
+   * Advance the idle animation. Called on a timer from loop(), so the pet
+   * shifts about instead of being a static drawing -- the single biggest thing
+   * separating "a picture of a pet" from "a pet".
+   */
+  void stepAnimation();
+
   void drawPet(int cx, int cy, int size) const;
   void drawStat(int x, int y, int w, const char* label, int value) const;
 
@@ -87,4 +95,15 @@ class PetActivity final : public Activity {
   bool haveClock = false;
   uint32_t todayOrdinal = 0;
   const char* toast = nullptr;
+
+  // Idle animation. hop is a small vertical offset, facing flips the pet, and
+  // both advance on a slow timer -- e-ink cannot do smooth motion, so this is
+  // deliberately a shuffle every few seconds rather than an attempt at frames.
+  int animFrame = 0;
+  unsigned long lastAnimMs = 0;
+  int hopOffset = 0;
+  bool facingLeft = false;
+
+  // Clean waveform on entry, differential for interaction. See RefreshPolicy.
+  RefreshPolicy refresh_;
 };

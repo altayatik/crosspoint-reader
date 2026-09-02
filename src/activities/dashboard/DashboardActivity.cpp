@@ -10,17 +10,16 @@
 #include <HalTiltSensor.h>
 #include <I18n.h>
 #include <Logging.h>
-#include <WiFi.h>
 
 #include <algorithm>
 #include <cstring>
 #include <vector>
 
 #include "CrossPointSettings.h"
-#include "WifiCredentialStore.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "network/HttpDownloader.h"
+#include "network/NetService.h"
 
 namespace {
 
@@ -68,17 +67,22 @@ void DashboardActivity::onEnter() {
   Activity::onEnter();
   Storage.mkdir("/.crosspoint");
 
+  // Show the last frame straight away. The panel is already holding it after a
+  // timer wake, but coming from the Home menu it is not, and watching a menu
+  // sit there through a Wi-Fi association and a 54KB download is what made this
+  // feel unresponsive. Painting from the SD cache first costs one refresh and
+  // makes the screen look instant.
+  if (!autoSleep && Storage.exists(LIVE_PATH)) {
+    phase = Phase::Image;
+    requestUpdateAndWait();
+  }
+
   busy = true;
   lastOutcome = refresh();
   busy = false;
   refreshed = true;
 
   LOG_INF("DSH", "Refresh finished: %s", outcomeName(lastOutcome));
-
-  // Radio down before anything slow happens, not after. Wi-Fi is the single
-  // biggest current draw on this device and there is no reason to hold it up
-  // while the e-ink waveform runs.
-  shutdownWifi();
 
   if (!autoSleep) {
     // Development mode: stay awake so the next build can be iterated on
@@ -106,10 +110,7 @@ void DashboardActivity::onEnter() {
   powerManager.startDeepSleepWithTimer(gpio, seconds);
 }
 
-void DashboardActivity::onExit() {
-  shutdownWifi();
-  Activity::onExit();
-}
+void DashboardActivity::onExit() { Activity::onExit(); }
 
 void DashboardActivity::loop() {
   Activity::loop();
@@ -121,7 +122,6 @@ void DashboardActivity::loop() {
     busy = true;
     lastOutcome = refresh();
     busy = false;
-    shutdownWifi();
     if (lastOutcome != Outcome::Displayed && lastOutcome != Outcome::Unchanged) {
       showStatus(outcomeName(lastOutcome));
     }
@@ -135,7 +135,6 @@ void DashboardActivity::loop() {
     busy = true;
     lastOutcome = refresh();
     busy = false;
-    shutdownWifi();
     if (lastOutcome != Outcome::Displayed && lastOutcome != Outcome::Unchanged) {
       showStatus(outcomeName(lastOutcome));
     }
@@ -155,18 +154,14 @@ DashboardActivity::Outcome DashboardActivity::refresh() {
 
   showBanner(tr(STR_DASHBOARD_CONNECTING));
   if (!connectWifi()) {
-    return WIFI_STORE.getCredentialCount() == 0 ? Outcome::NoWifi : Outcome::WifiFailed;
+    return NET.hasCredentials() ? Outcome::WifiFailed : Outcome::NoWifi;
   }
 
-  // Opportunistic: the RTC drives the status-bar clock elsewhere in the
-  // firmware, and dashboard mode may be the only time this device ever has a
-  // network connection. Failure is ignored -- it is not what we came for.
-  if (halClock.isAvailable() && !SETTINGS.clockHasBeenSynced) {
-    if (halClock.syncFromNTP()) {
-      SETTINGS.clockHasBeenSynced = 1;
-      SETTINGS.saveToFile();
-    }
-  }
+  // Opportunistic clock repair. Not syncFromNTP(): that writes UTC, and every
+  // date-aware screen in this build reads the RTC as local time. NetService
+  // fetches the local reading instead. Failure is ignored -- it is not what we
+  // came for.
+  if (!NET.clockIsSet()) NET.syncClock();
 
   if (millis() - started > HARD_CYCLE_LIMIT_MS) {
     LOG_ERR("DSH", "Cycle budget exhausted before download");
@@ -238,63 +233,10 @@ void DashboardActivity::cycleTheme() {
 }
 
 bool DashboardActivity::connectWifi() {
-  WIFI_STORE.loadFromFile();
-  const size_t count = WIFI_STORE.getCredentialCount();
-  if (count == 0) {
-    LOG_ERR("DSH", "No saved WiFi credentials");
-    return false;
-  }
-
-  WiFi.persistent(false);  // credentials live in WifiCredentialStore, not NVS
-  WiFi.mode(WIFI_STA);
-
-  // Try the last-connected network first: on a device that lives in one room
-  // it is right essentially every time, and each miss costs a full timeout.
-  std::vector<std::string> order;
-  order.reserve(count);
-  const std::string last = WIFI_STORE.getLastConnectedSsid();
-  if (!last.empty()) order.push_back(last);
-  for (size_t i = 0; i < count; ++i) {
-    const auto ssid = WIFI_STORE.getSsidAt(i);
-    if (ssid && *ssid != last) order.push_back(*ssid);
-  }
-
-  const unsigned long perNetworkMs = std::max<unsigned long>(5, SETTINGS.dashboardWifiTimeoutSeconds) * 1000UL;
-
-  for (const auto& ssid : order) {
-    const auto credential = WIFI_STORE.findCredential(ssid);
-    if (!credential) continue;
-
-    LOG_DBG("DSH", "Joining %s", ssid.c_str());
-    if (credential->password.empty()) {
-      WiFi.begin(ssid.c_str());
-    } else {
-      WiFi.begin(ssid.c_str(), credential->password.c_str());
-    }
-
-    const unsigned long deadline = millis() + perNetworkMs;
-    while (millis() < deadline) {
-      if (WiFi.status() == WL_CONNECTED) {
-        LOG_INF("DSH", "Connected to %s", ssid.c_str());
-        WIFI_STORE.setLastConnectedSsid(ssid);
-        return true;
-      }
-      delay(100);
-    }
-
-    LOG_ERR("DSH", "Timed out joining %s", ssid.c_str());
-    WiFi.disconnect(true);
-  }
-
-  return false;
+  // NetService associated at boot and holds the link; just wait for it.
+  return NET.ensureConnected(std::max<uint32_t>(5, SETTINGS.dashboardWifiTimeoutSeconds) * 1000UL);
 }
 
-void DashboardActivity::shutdownWifi() const {
-  if (WiFi.getMode() == WIFI_MODE_NULL) return;
-  WiFi.disconnect(true);
-  WiFi.mode(WIFI_OFF);
-  LOG_DBG("DSH", "WiFi off");
-}
 
 bool DashboardActivity::download(const std::string& url) {
   Storage.remove(TEMP_PATH);

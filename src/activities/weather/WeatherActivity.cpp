@@ -7,7 +7,6 @@
 #include <HalStorage.h>
 #include <I18n.h>
 #include <Logging.h>
-#include <WiFi.h>
 
 #include <algorithm>
 #include <cstdio>
@@ -15,11 +14,12 @@
 #include <string>
 
 #include "CrossPointSettings.h"
-#include "WifiCredentialStore.h"
 #include "activities/util/KeyboardEntryActivity.h"
+#include "components/AppStatusBar.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "network/HttpDownloader.h"
+#include "network/NetService.h"
 
 namespace {
 
@@ -64,10 +64,8 @@ void WeatherActivity::onEnter() {
 }
 
 void WeatherActivity::onExit() {
-  if (WiFi.getMode() != WIFI_MODE_NULL) {
-    WiFi.disconnect(true);
-    WiFi.mode(WIFI_OFF);
-  }
+  // The radio stays up: NetService owns it now. Tearing it down here is what
+  // made the next screen's fetch fail while the device looked connected.
   Activity::onExit();
 }
 
@@ -86,10 +84,6 @@ void WeatherActivity::loop() {
     requestUpdateAndWait();
     statusLine = fetchNow() ? nullptr : tr(STR_WEATHER_OFFLINE);
     busy = false;
-    if (WiFi.getMode() != WIFI_MODE_NULL) {
-      WiFi.disconnect(true);
-      WiFi.mode(WIFI_OFF);
-    }
     requestUpdate();
     return;
   }
@@ -120,10 +114,6 @@ void WeatherActivity::editCity() {
     requestUpdateAndWait();
     statusLine = fetchNow() ? nullptr : tr(STR_WEATHER_OFFLINE);
     busy = false;
-    if (WiFi.getMode() != WIFI_MODE_NULL) {
-      WiFi.disconnect(true);
-      WiFi.mode(WIFI_OFF);
-    }
     requestUpdate();
   };
 
@@ -159,18 +149,8 @@ std::string WeatherActivity::encodeQuery(const char* text) {
 }
 
 std::string WeatherActivity::buildUrl() const {
-  // Derived from the dashboard URL so there is one host to configure, not two.
-  // Replacing the last path segment keeps any custom domain or port intact.
-  std::string url(SETTINGS.dashboardUrl);
+  std::string url = NetService::apiUrl("x3-weather.json");
   if (url.empty()) return url;
-
-  const size_t query = url.find('?');
-  if (query != std::string::npos) url.erase(query);
-
-  const size_t slash = url.find_last_of('/');
-  if (slash == std::string::npos) return std::string();
-  url.erase(slash + 1);
-  url += "x3-weather.json";
 
   // Empty means "use whatever the dashboard is configured for", so the two
   // screens agree until the user deliberately splits them.
@@ -252,33 +232,11 @@ bool WeatherActivity::fetchNow() {
 
   HalPowerManager::Lock powerLock;
 
-  if (WiFi.status() != WL_CONNECTED) {
-    WIFI_STORE.loadFromFile();
-    const size_t count = WIFI_STORE.getCredentialCount();
-    if (count == 0) {
-      LOG_ERR("WX", "No saved WiFi");
-      return false;
-    }
-    WiFi.persistent(false);
-    WiFi.mode(WIFI_STA);
-
-    const std::string last = WIFI_STORE.getLastConnectedSsid();
-    const auto credential = !last.empty() ? WIFI_STORE.findCredential(last) : WIFI_STORE.getCredentialAt(0);
-    if (!credential) return false;
-
-    if (credential->password.empty()) {
-      WiFi.begin(credential->ssid.c_str());
-    } else {
-      WiFi.begin(credential->ssid.c_str(), credential->password.c_str());
-    }
-
-    const unsigned long deadline =
-        millis() + std::max<unsigned long>(5, SETTINGS.dashboardWifiTimeoutSeconds) * 1000UL;
-    while (WiFi.status() != WL_CONNECTED && millis() < deadline) delay(100);
-    if (WiFi.status() != WL_CONNECTED) {
-      LOG_ERR("WX", "WiFi timeout");
-      return false;
-    }
+  // Wait on the shared link rather than bringing the radio up here. At boot the
+  // association may still be in flight, so give it a window before giving up.
+  if (!NET.ensureConnected(std::max<uint32_t>(5, SETTINGS.dashboardWifiTimeoutSeconds) * 1000UL)) {
+    LOG_ERR("WX", NET.hasCredentials() ? "No network" : "No saved WiFi");
+    return false;
   }
 
   std::string body;
@@ -447,24 +405,24 @@ void WeatherActivity::render(RenderLock&&) {
   const int margin = 14;
 
   renderer.clearScreen();
+  AppStatusBar::draw(renderer, tr(STR_WEATHER_MENU));
 
   if (!reading.valid) {
-    renderer.drawCenteredText(UI_12_FONT_ID, 46, tr(STR_WEATHER_MENU), true, EpdFontFamily::BOLD);
     renderer.drawCenteredText(UI_10_FONT_ID, pageHeight / 2, statusLine ? statusLine : tr(STR_WEATHER_NO_DATA));
     const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_DASHBOARD_REFRESH_BTN), tr(STR_WEATHER_CITY), "");
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
-    renderer.displayBuffer(HalDisplay::HALF_REFRESH);
+    renderer.displayBuffer(refresh_.next());
     return;
   }
 
-  renderer.drawCenteredText(UI_12_FONT_ID, 26, reading.place, true, EpdFontFamily::BOLD);
+  renderer.drawCenteredText(UI_12_FONT_ID, AppStatusBar::HEIGHT + 6, reading.place, true, EpdFontFamily::BOLD);
 
   // Bento stack, sized from the panel so the X4's 480x800 lays out too. Heights
   // are proportions of the space between the header and the footer band rather
   // than fixed pixels, which is what let the old layout collide.
   const int cardX = margin;
   const int cardW = pageWidth - margin * 2;
-  const int top = 62;
+  const int top = AppStatusBar::HEIGHT + 38;
   const int bottom = pageHeight - 96;  // footer line + button hints
   const int gap = 12;
   const int body = bottom - top - gap * 3;
@@ -495,5 +453,5 @@ void WeatherActivity::render(RenderLock&&) {
 
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_DASHBOARD_REFRESH_BTN), tr(STR_WEATHER_CITY), "");
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
-  renderer.displayBuffer(HalDisplay::HALF_REFRESH);
+  renderer.displayBuffer(refresh_.next());
 }

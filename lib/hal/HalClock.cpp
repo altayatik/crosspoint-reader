@@ -77,6 +77,15 @@ bool HalClock::formatTime(char* buf, size_t bufSize, uint8_t utcOffsetQuarterHou
   return true;
 }
 
+bool HalClock::setDateTime(const Rtc::DateTime& dt) {
+  if (!_available) return false;
+  if (!_sdkRtc.set(dt)) return false;
+  // Drop the getTime() cache so the next read reflects the write rather than
+  // the value from before it, for up to CLOCK_POLL_MS.
+  _hasCachedTime = false;
+  return true;
+}
+
 bool HalClock::syncFromNTP() {
   if (!_available) return false;
 
