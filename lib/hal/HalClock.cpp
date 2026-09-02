@@ -8,6 +8,7 @@
 HalClock halClock;  // Singleton instance
 
 void HalClock::begin() {
+  if (_mutex == nullptr) _mutex = xSemaphoreCreateMutex();
   _available = _sdkRtc.begin();
   LOG_INF("CLK", _available ? "SDK RTC found" : "RTC not found");
 }
@@ -23,7 +24,12 @@ bool HalClock::getTime(uint8_t& hour, uint8_t& minute) const {
   }
 
   Rtc::DateTime dt;
-  if (!_sdkRtc.now(dt)) {
+  bool read;
+  {
+    Lock lock(_mutex);
+    read = _sdkRtc.now(dt);
+  }
+  if (!read) {
     if (!_hasCachedTime) return false;
     _lastPollMs = now;
     hour = _cachedHour;
@@ -41,7 +47,10 @@ bool HalClock::getTime(uint8_t& hour, uint8_t& minute) const {
 
 bool HalClock::getDateTime(Rtc::DateTime& out) const {
   if (!_available) return false;
-  if (!_sdkRtc.now(out)) return false;
+  {
+    Lock lock(_mutex);
+    if (!_sdkRtc.now(out)) return false;
+  }
   // Keep the hour/minute cache warm off the same read.
   _cachedHour = out.hour;
   _cachedMinute = out.minute;
@@ -79,7 +88,10 @@ bool HalClock::formatTime(char* buf, size_t bufSize, uint8_t utcOffsetQuarterHou
 
 bool HalClock::setDateTime(const Rtc::DateTime& dt) {
   if (!_available) return false;
-  if (!_sdkRtc.set(dt)) return false;
+  {
+    Lock lock(_mutex);
+    if (!_sdkRtc.set(dt)) return false;
+  }
   // Drop the getTime() cache so the next read reflects the write rather than
   // the value from before it, for up to CLOCK_POLL_MS.
   _hasCachedTime = false;
@@ -113,6 +125,7 @@ bool HalClock::syncFromNTP() {
       dt.minute = static_cast<uint8_t>(timeinfo.tm_min);
       dt.second = static_cast<uint8_t>(timeinfo.tm_sec);
       dt.weekday = static_cast<uint8_t>(timeinfo.tm_wday);
+      Lock lock(_mutex);
       if (_sdkRtc.set(dt)) {
         _lastPollMs = 0;
         _cachedHour = dt.hour;

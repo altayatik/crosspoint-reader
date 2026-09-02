@@ -318,6 +318,7 @@ void setup() {
   RECENT_BOOKS.loadFromFile();
   I18N.setLanguage(static_cast<Language>(SETTINGS.language));
   KOREADER_STORE.loadFromFile();
+
   OPDS_STORE.loadFromFile();
   UITheme::getInstance().reload();
   ButtonNavigator::setMappedInputManager(mappedInputManager);
@@ -386,6 +387,22 @@ void setup() {
   bool allowFastInitialReaderRefresh = false;
 
   setupDisplayAndFonts(resume != BootResume::Splash);
+
+  // Radio up here: after the panel has drawn its first frame, before the
+  // activity routing below.
+  //
+  // Not earlier, because a Wi-Fi TX burst on top of the display's power-up
+  // inrush is asking for a brownout reset on battery. Not later, because
+  // dashboard mode runs its whole onEnter() inside setup() and never returns on
+  // the unattended path -- anything after that point never runs, which would
+  // leave the dashboard waiting on a link nothing was bringing up.
+  //
+  // Skipped in recovery mode -- that screen exists to rescue a device that will
+  // not boot, so it does the least possible -- and after a panic, so that if
+  // anything on the network path ever faults again the next boot comes up
+  // inert instead of repeating it. A boot loop is the one failure this device
+  // cannot be talked out of over the wire.
+  if (!recoveryFirmwareMode && !rebootedFromPanic) NET.begin();
 
   switch (resume) {
     case BootResume::Silent:
@@ -491,11 +508,6 @@ void setup() {
     gpio.update();
   }
 
-  // Last, so the SD card is mounted (the credential store lives there) and the
-  // first screen is already painted while association runs in the background.
-  // No screen brings Wi-Fi up for itself any more.
-  NET.begin();
-
   allowSleepAt = millis() + 2000;
 }
 
@@ -503,6 +515,13 @@ void loop() {
   static unsigned long maxLoopDuration = 0;
   const unsigned long loopStartTime = millis();
   static unsigned long lastMemPrint = 0;
+
+  // Repairs a dead RTC once there is a link. Deliberately here and not on the
+  // network task: this does a TLS handshake, which needs ~8-10KB of stack, and
+  // running it on that task's 4KB overflowed it and panicked the device on
+  // every boot. This task has 8192 and is where the rest of the firmware's
+  // HTTPS already happens. Rate-limited and capped inside maybeSyncClock().
+  NET.maybeSyncClock();
 
   gpio.setSharedConfirmPowerShortPressEmitsPower(SETTINGS.shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::SLEEP);
   gpio.update();

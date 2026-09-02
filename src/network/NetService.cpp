@@ -16,9 +16,16 @@
 
 namespace {
 
-// Network + TLS + a JSON parse. 4096 is the project's figure for anything that
-// touches the socket stack; 2048 is for render-only tasks.
+// Association only -- no TLS on this task. An HTTPS handshake with the CA
+// bundle wants 8-10KB and would overflow this; the clock sync therefore runs on
+// the main task, which has 8192 and is where every other HTTPS call in this
+// firmware already happens.
 constexpr uint32_t TASK_STACK_BYTES = 4096;
+
+// Give up after this many clock attempts per boot, so an unreachable server
+// does not mean a request every time round the main loop.
+constexpr uint8_t MAX_CLOCK_ATTEMPTS = 5;
+constexpr unsigned long CLOCK_RETRY_MS = 30000;
 
 // How long to wait for the first association before giving up and retrying.
 constexpr uint32_t ASSOCIATE_TIMEOUT_MS = 20000;
@@ -99,12 +106,24 @@ void NetService::taskLoop() {
   connected = ok;
   connecting = false;
 
-  if (ok) {
-    LOG_INF("NET", "Connected: %s", WiFi.localIP().toString().c_str());
-    if (!clockValid) syncClock();
-  }
+  if (ok) LOG_INF("NET", "Connected: %s", WiFi.localIP().toString().c_str());
 
   for (;;) {
+    // Stand down while another screen owns the radio.
+    //
+    // File Transfer brings up an access point, Wi-Fi setup scans and joins, OTA
+    // and font download drive their own connections. Those are upstream screens
+    // that predate this service, and re-associating underneath them would break
+    // both. AP mode means hands off entirely; a radio that is merely off is
+    // fair game again after the retry interval, so a screen that switches it
+    // off on exit still gets the link back.
+    const wifi_mode_t mode = WiFi.getMode();
+    if (mode == WIFI_AP || mode == WIFI_AP_STA) {
+      connected = false;
+      vTaskDelay(pdMS_TO_TICKS(5000));
+      continue;
+    }
+
     // Reconnect rather than reboot: the link drops when the router restarts,
     // and a dashboard on a wall should recover on its own.
     if (WiFi.status() != WL_CONNECTED) {
@@ -114,7 +133,6 @@ void NetService::taskLoop() {
       ok = associate();
       connected = ok;
       connecting = false;
-      if (ok && !clockValid) syncClock();
       if (!ok) vTaskDelay(pdMS_TO_TICKS(RETRY_INTERVAL_MS));
       continue;
     }
@@ -133,6 +151,18 @@ bool NetService::ensureConnected(const uint32_t timeoutMs) {
     delay(100);
   }
   return connected;
+}
+
+void NetService::maybeSyncClock() {
+  if (clockValid || !connected) return;
+  if (clockAttempts >= MAX_CLOCK_ATTEMPTS) return;
+
+  const unsigned long now = millis();
+  if (nextClockAttemptMs != 0 && static_cast<long>(now - nextClockAttemptMs) < 0) return;
+
+  ++clockAttempts;
+  nextClockAttemptMs = now + CLOCK_RETRY_MS;
+  syncClock();
 }
 
 bool NetService::syncClock() {

@@ -50,8 +50,21 @@ class NetService {
   /** True once the RTC holds a date this firmware is willing to believe. */
   bool clockIsSet() const { return clockValid; }
 
-  /** Fetch local time and write it to the RTC. Requires a connection. */
+  /**
+   * Fetch local time and write it to the RTC. Requires a connection.
+   *
+   * MUST be called from a task with a large stack. The TLS handshake needs
+   * roughly 8-10KB, which is why this is not run on the network task below:
+   * doing so overflowed its stack and panicked the device on every boot with a
+   * dead RTC, which is a boot loop.
+   */
   bool syncClock();
+
+  /**
+   * Main-task hook. Call from loop(); syncs the clock at most a few times,
+   * spaced out, and only when there is a link and the RTC is wrong.
+   */
+  void maybeSyncClock();
 
   /**
    * Absolute URL for an API path, derived from the configured dashboard URL so
@@ -79,6 +92,11 @@ class NetService {
   volatile bool connecting = false;
   volatile bool clockValid = false;
   volatile uint8_t credentialCount = 0;
+
+  // Clock-sync attempts, owned by the main task. Capped and spaced so a server
+  // that is down cannot turn into a request every loop iteration.
+  uint8_t clockAttempts = 0;
+  unsigned long nextClockAttemptMs = 0;
 };
 
 #define NET NetService::getInstance()

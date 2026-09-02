@@ -2,6 +2,8 @@
 
 #include <Arduino.h>
 #include <Rtc.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 
 class HalClock;
 extern HalClock halClock;  // Singleton
@@ -15,6 +17,27 @@ class HalClock {
   mutable unsigned long _lastPollMs = 0;
 
   static constexpr unsigned long CLOCK_POLL_MS = 10000;  // 10 seconds
+
+  // The RTC sits on I2C and is now read from the render task (the status bar
+  // draws the clock on every screen) while the main task can be writing it
+  // during a clock sync. Two tasks driving the same bus without a guard is a
+  // corrupt read at best and a wedged bus at worst.
+  mutable SemaphoreHandle_t _mutex = nullptr;
+
+  /** RAII guard. Degrades to a no-op if the mutex could not be created. */
+  class Lock {
+    SemaphoreHandle_t _handle;
+
+   public:
+    explicit Lock(SemaphoreHandle_t handle) : _handle(handle) {
+      if (_handle) xSemaphoreTake(_handle, portMAX_DELAY);
+    }
+    ~Lock() {
+      if (_handle) xSemaphoreGive(_handle);
+    }
+    Lock(const Lock&) = delete;
+    Lock& operator=(const Lock&) = delete;
+  };
 
  public:
   // Call after BoardConfig has selected the active device.
